@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>보험 DB 사이트</title>
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <header class="hero">
+      <div class="topbar">
+        <span class="badge">보험 정보 제공형 랜딩</span>
+        <span class="sub-badge">설계사 연결 서비스</span>
+      </div>
+      <h1>보험료가 부담되시나요?</h1>
+      <p class="hero-sub">현재 가입된 보험 상태를 확인하고 전문 보험설계사 상담 연결을 받아보세요.</p>
+      <div class="cta-group">
+        <a href="#consult" class="cta">상담 신청하기</a>
+        <a href="#consult" class="cta">보험 점검 요청</a>
+      </div>
+    </header>
+
+    <section>
+      <h2>이런 분들에게 추천드립니다</h2>
+      <ul class="recommend-list">
+        <li>보험료가 너무 많이 나가는 것 같은 분</li>
+        <li>내가 어떤 보험에 가입했는지 잘 모르는 분</li>
+        <li>보험 점검 상담이 필요한 분</li>
+        <li>실비/특약 확인이 필요한 분</li>
+      </ul>
+    </section>
+
+    <section class="feature-grid">
+      <h2>어떻게 진행되나요?</h2>
+      <div class="flow">
+        <article class="feature">
+          <h3>1. 간단 설문 작성</h3>
+          <p>현재 보험 상황을 간단하게 입력해주세요.</p>
+        </article>
+        <article class="feature">
+          <h3>2. 전문 설계사 연결</h3>
+          <p>입력 정보를 바탕으로 상담 가능한 설계사를 연결해드립니다.</p>
+        </article>
+        <article class="feature">
+          <h3>3. 상담 진행</h3>
+          <p>보험 분석 및 상담은 전문 자격 보험설계사가 진행합니다.</p>
+        </article>
+      </div>
+    </section>
+
+    <section id="consult" class="consult">
+      <h2>보험 점검 상담 신청</h2>
+      <% if (success) { %>
+      <p class="success">상담 요청이 접수되었습니다. 빠르게 연락드리겠습니다.</p>
+      <% } %>
+      <% if (fail === "agreement") { %>
+      <p class="error">동의 항목을 모두 체크해야 상담 신청이 가능합니다.</p>
+      <% } %>
+      <% if (fail === "validation") { %>
+      <p class="error">입력값을 다시 확인해주세요. (이름/연락처/연령대/성별/최근 점검)</p>
+      <% } %>
+      <% if (fail === "csrf") { %>
+      <p class="error">보안 토큰이 만료되었습니다. 다시 제출해주세요.</p>
+      <% } %>
+      <form action="/consult" method="POST" class="consult-form">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>" />
+        <div class="field-group field-group--text">
+          <label class="field-label" for="applicant-name">이름</label>
+          <input id="applicant-name" name="name" placeholder="이름을 입력해주세요" required />
+        </div>
+        <div class="field-group field-group--text">
+          <label class="field-label" for="applicant-phone">연락처</label>
+          <input
+            id="applicant-phone"
+            name="phone"
+            type="tel"
+            inputmode="numeric"
+            autocomplete="tel"
+            placeholder="01012345678"
+            required
+          />
+        </div>
+        <div class="field-group">
+          <span class="field-label">상담 희망 여부</span>
+          <div class="choice-chips choice-chips--2">
+            <label class="chip"
+              ><input type="radio" name="consultHope" value="yes" checked /><span>희망</span></label
+            >
+            <label class="chip"
+              ><input type="radio" name="consultHope" value="no" /><span>미희망</span></label
+            >
+          </div>
+        </div>
+        <div class="field-group">
+          <span class="field-label">현재 보험 가입 여부</span>
+          <div class="choice-chips choice-chips--insured">
+            <label class="chip"
+              ><input type="radio" name="insuredStatus" value="yes" checked /><span>있다</span></label
+            >
+            <label class="chip"
+              ><input type="radio" name="insuredStatus" value="no" /><span>없다</span></label
+            >
+            <label class="chip"
+              ><input type="radio" name="insuredStatus" value="unknown" /><span>잘 모르겠다</span></label
+            >
+          </div>
+        </div>
+        <div class="field-group">
+          <span class="field-label">최근 보험 점검 경험</span>
+          <div class="choice-chips choice-chips--check">
+            <label class="chip"
+              ><input type="radio" name="lastInsuranceCheck" value="within3m" required /><span
+                >3개월 이내</span
+              ></label
+            >
+            <label class="chip"
+              ><input type="radio" name="lastInsuranceCheck" value="within6m" /><span>6개월 이내</span></label
+            >
+            <label class="chip"
+              ><input type="radio" name="lastInsuranceCheck" value="within1y" /><span>1년 이내</span></label
+            >
+            <label class="chip"
+              ><input type="radio" name="lastInsuranceCheck" value="over1y" /><span>1년 이상</span></label
+            >
+            <label class="chip"
+              ><input type="radio" name="lastInsuranceCheck" value="unknown" /><span>기억 안 남</span></label
+            >
+          </div>
+        </div>
+        <div class="field-group">
+          <span class="field-label">연령대</span>
+          <div class="choice-chips choice-chips--age">
+            <label class="chip"
+              ><input type="radio" name="ageBand" value="20" required /><span>20대</span></label
+            >
+            <label class="chip"
+              ><input type="radio" name="ageBand" value="30" /><span>30대</span></label
+            >
+            <label class="chip"
+              ><input type="radio" name="ageBand" value="40" /><span>40대</span></label
+            >
+            <label class="chip"
+              ><input type="radio" name="ageBand" value="50" /><span>50대</span></label
+            >
+            <label class="chip"
+              ><input type="radio" name="ageBand" value="60" /><span>60대 이상</span></label
+            >
+          </div>
+        </div>
+        <div class="field-group">
+          <span class="field-label">성별</span>
+          <div class="choice-chips choice-chips--2">
+            <label class="chip"
+              ><input type="radio" name="gender" value="male" required /><span>남</span></label
+            >
+            <label class="chip"
+              ><input type="radio" name="gender" value="female" /><span>여</span></label
+            >
+          </div>
+        </div>
+        <label class="check-item">
+          <input type="checkbox" name="agreePrivacy" required />
+          개인정보 수집 및 이용 동의
+        </label>
+        <label class="check-item">
+          <input type="checkbox" name="agreeThirdParty" required />
+          보험 상담 진행을 위한 제3자 제공 동의
+        </label>
+        <label class="check-item">
+          <input type="checkbox" name="agreeContact" required />
+          상담 연결 및 연락 수신 동의
+        </label>
+        <button type="submit">상담 요청 보내기</button>
+      </form>
+      <p class="notice">
+        ※ 본 서비스는 보험 상담 연결 플랫폼입니다.<br />
+        ※ 실제 보험 상담 및 계약은 전문 보험설계사를 통해 진행됩니다.<br />
+        ※ 개인 상황에 따라 상담 내용은 달라질 수 있습니다.
+      </p>
+    </section>
+  </body>
+</html>

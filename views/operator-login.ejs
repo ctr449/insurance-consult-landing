@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>운용자 로그인</title>
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <section class="login-card">
+      <h1>운용자 로그인</h1>
+      <p>상담 요청 조회는 운용자만 가능합니다.</p>
+      <% if (error) { %>
+      <p class="error"><%= error %></p>
+      <% } %>
+      <form action="/operator/login" method="POST">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>" />
+        <input type="password" name="password" placeholder="운용자 비밀번호" required />
+        <button type="submit">로그인</button>
+      </form>
+      <p class="operator-link"><a href="/">랜딩으로 돌아가기</a></p>
+    </section>
+  </body>
+</html>

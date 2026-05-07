@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>운용자 상담 요청 목록</title>
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <section>
+      <div class="topbar">
+        <h1>상담 요청 목록</h1>
+        <form action="/operator/logout" method="POST" class="inline">
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>" />
+          <button type="submit">로그아웃</button>
+        </form>
+      </div>
+
+      <% if (requests.length === 0) { %>
+      <p>아직 접수된 상담 요청이 없습니다.</p>
+      <% } else { %>
+      <div class="operator-list">
+        <% requests.forEach((item) => { %>
+        <article class="operator-card">
+          <p><strong>이름</strong>: <%= item.name %></p>
+          <p><strong>연락처</strong>: <%= item.phone %></p>
+          <p><strong>상담 희망 여부</strong>: <%= item.consultHope === "yes" ? "희망" : "미희망" %></p>
+          <p>
+            <strong>현재 보험 가입 여부</strong>:
+            <%= item.insuredStatus === "yes" ? "있다" : item.insuredStatus === "no" ? "없다" : "잘 모르겠다" %>
+          </p>
+          <p><strong>최근 보험 점검</strong>: <%= item.lastInsuranceCheckLabel %></p>
+          <p><strong>연령대</strong>: <%= item.ageLabel %></p>
+          <p>
+            <strong>성별</strong>:
+            <%= item.gender === "male" ? "남" : item.gender === "female" ? "여" : "-" %>
+          </p>
+          <p>
+            <strong>동의 상태</strong>:
+            개인정보(<%= item.agreements?.privacy ? "Y" : "N" %>) /
+            제3자제공(<%= item.agreements?.thirdParty ? "Y" : "N" %>) /
+            상담연결(<%= item.agreements?.contact ? "Y" : "N" %>)
+          </p>
+          <p><strong>접수시각</strong>: <%= new Date(item.createdAt).toLocaleString("ko-KR") %></p>
+        </article>
+        <% }) %>
+      </div>
+      <% } %>
+    </section>
+  </body>
+</html>
