@@ -19,3 +19,32 @@ npm start
 ## 환경 변수
 
 `.env.example` 참고. `data/` 는 신청 내역 저장용이며 저장소에 포함하지 않습니다.
+
+## 배포 (Render 예시)
+
+1. [Render](https://render.com) 에서 **New → Web Service** → GitHub 저장소 `ctr449/insurance-consult-landing` 연결  
+2. **Build Command**: `npm install`  
+3. **Start Command**: `npm start`  
+4. **Environment** 에 다음 추가:
+
+| 변수 | 설명 |
+|------|------|
+| `NODE_ENV` | `production` |
+| `OPERATOR_PASSWORD` | 운용자 로그인 비밀번호 (강하게 설정) |
+| `PII_ENCRYPTION_KEY` | 64자리 hex (로컬 `.env` 와 **다르게** 새로 생성 권장) |
+| `RETENTION_DAYS` | (선택) 기본 `90` |
+
+Render가 부여하는 `PORT` 는 자동 사용됩니다.
+
+### 신청 데이터를 잃지 않으려면
+
+무료 웹 서비스는 디스크가 **재시작 시 초기화**될 수 있습니다. 상담 신청을 오래 보관하려면:
+
+- Render에서 **Persistent Disk** 를 붙이고 마운트 경로(예: `/var/data`)를 정한 뒤  
+  환경 변수 **`DATA_DIR=/var/data`** 를 설정하세요.
+
+또는 나중에 DB(Supabase 등)로 옮기는 것을 권장합니다.
+
+### 다른 호스팅
+
+- **Railway**, **Fly.io** 도 Node 앱 + 동일 환경 변수로 동작합니다. HTTPS는 플랫폼이 앞단에서 처리합니다.

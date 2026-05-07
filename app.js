@@ -9,12 +9,14 @@ const rateLimit = require("express-rate-limit");
 require("dotenv").config();
 
 const app = express();
-const PORT = 3000;
+const PORT = Number(process.env.PORT) || 3000;
 const OPERATOR_PASSWORD = process.env.OPERATOR_PASSWORD || "change-operator-password";
 const OPERATOR_COOKIE = "operator_auth";
 const OPERATOR_TOKEN = crypto.createHash("sha256").update(OPERATOR_PASSWORD).digest("hex");
 const RETENTION_DAYS = Number(process.env.RETENTION_DAYS || 90);
-const dataDir = path.join(__dirname, "data");
+const dataDir = process.env.DATA_DIR
+  ? path.resolve(process.env.DATA_DIR)
+  : path.join(__dirname, "data");
 const consultFilePath = path.join(dataDir, "consult-requests.json");
 const isProduction = process.env.NODE_ENV === "production";
 const encryptionKeySource = process.env.PII_ENCRYPTION_KEY || "";
@@ -347,8 +349,8 @@ app.use((err, req, res, next) => {
   return next(err);
 });
 
-app.listen(PORT, () => {
-  console.log(`보험 DB 사이트 실행: http://localhost:${PORT}`);
+app.listen(PORT, "0.0.0.0", () => {
+  console.log(`보험 DB 사이트 실행 (포트 ${PORT})`);
   if (OPERATOR_PASSWORD === "change-operator-password") {
     console.log("운용자 보호를 위해 OPERATOR_PASSWORD 환경변수를 설정하세요.");
   }
