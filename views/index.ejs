@@ -64,6 +64,9 @@
       <% if (fail === "duplicate") { %>
       <p class="error">같은 연락처로는 24시간 내 중복 상담 신청이 제한됩니다.</p>
       <% } %>
+      <% if (fail === "server") { %>
+      <p class="error">일시적인 서버 오류가 발생했습니다. 잠시 후 다시 시도해주세요.</p>
+      <% } %>
       <% if (fail === "csrf") { %>
       <p class="error">보안 토큰이 만료되었습니다. 다시 제출해주세요.</p>
       <% } %>

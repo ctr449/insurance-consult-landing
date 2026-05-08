@@ -4,7 +4,9 @@
   "description": "Simple insurance database website with Express and SQLite",
   "main": "app.js",
   "scripts": {
-    "start": "node app.js"
+    "start": "node app.js",
+    "backup:db": "bash scripts/backup-db.sh",
+    "restore:db": "bash scripts/restore-db.sh"
   },
   "keywords": [
     "insurance",

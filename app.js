@@ -28,6 +28,7 @@ const DUPLICATE_LEAD_WINDOW_HOURS = Number(process.env.DUPLICATE_LEAD_WINDOW_HOU
 const AGREEMENT_VERSION = process.env.AGREEMENT_VERSION || "v1.0";
 const DATABASE_URL = process.env.DATABASE_URL || "";
 const isProduction = process.env.NODE_ENV === "production";
+const TRUST_PROXY = process.env.TRUST_PROXY || "1";
 const encryptionKeySource = process.env.PII_ENCRYPTION_KEY || "";
 const PII_ENCRYPTION_KEY =
   /^[a-fA-F0-9]{64}$/.test(encryptionKeySource)
@@ -44,7 +45,7 @@ const dbPool = new Pool({
 app.set("view engine", "ejs");
 app.set("views", path.join(__dirname, "views"));
 
-app.set("trust proxy", 1);
+app.set("trust proxy", TRUST_PROXY);
 app.use(
   helmet({
     contentSecurityPolicy: {
@@ -63,7 +64,9 @@ app.use(
   })
 );
 app.use((req, res, next) => {
-  if (isProduction && req.headers["x-forwarded-proto"] !== "https") {
+  const forwardedProto = String(req.headers["x-forwarded-proto"] || "");
+  const isHttpsForwarded = forwardedProto.toLowerCase().split(",").map((v) => v.trim()).includes("https");
+  if (isProduction && !isHttpsForwarded) {
     return res.redirect(`https://${req.headers.host}${req.originalUrl}`);
   }
   return next();
@@ -80,6 +83,7 @@ app.use(
       tableName: "user_sessions",
       createTableIfMissing: true
     }),
+    proxy: true,
     resave: false,
     saveUninitialized: false,
     cookie: {
@@ -638,6 +642,12 @@ function verifyOperatorOtp(otp) {
   return authenticator.check(token, OPERATOR_TOTP_SECRET);
 }
 
+function withAsync(handler) {
+  return (req, res, next) => {
+    Promise.resolve(handler(req, res, next)).catch(next);
+  };
+}
+
 function isOperatorAuthenticated(req) {
   return Boolean(
     req.session &&
@@ -661,7 +671,7 @@ app.get("/", (req, res) => {
   });
 });
 
-app.post("/consult", async (req, res) => {
+app.post("/consult", withAsync(async (req, res) => {
   const parsed = parseConsultPayload(req.body);
   // #region agent log
   fetch("http://127.0.0.1:7561/ingest/5c01f500-4c66-473d-982d-543e2111d81d", {
@@ -729,13 +739,13 @@ app.post("/consult", async (req, res) => {
   });
   await writeAuditLog(req, "consult_create", "success", "consult_request", requestId);
   return res.redirect("/?sent=1#consult");
-});
+}));
 
 app.get("/operator/login", (req, res) => {
   res.render("operator-login", { error: "", csrfToken: req.csrfToken() });
 });
 
-app.post("/operator/login", operatorLoginLimiter, async (req, res) => {
+app.post("/operator/login", operatorLoginLimiter, withAsync(async (req, res) => {
   const username = String(req.body.username || "").trim();
   const password = String(req.body.password || "");
   const otp = String(req.body.otp || "");
@@ -764,7 +774,7 @@ app.post("/operator/login", operatorLoginLimiter, async (req, res) => {
       .catch(() => null)
       .finally(() => res.redirect("/operator"));
   });
-});
+}));
 
 app.post("/operator/logout", (req, res) => {
   const actor = req.session?.operatorUsername || "unknown";
@@ -781,7 +791,7 @@ app.post("/operator/logout", (req, res) => {
   });
 });
 
-app.get("/operator", requireOperatorAuth, async (req, res) => {
+app.get("/operator", requireOperatorAuth, withAsync(async (req, res) => {
   const pageRaw = Number.parseInt(String(req.query.page || "1"), 10);
   const page = Number.isFinite(pageRaw) && pageRaw > 0 ? pageRaw : 1;
   const offset = (page - 1) * OPERATOR_PAGE_SIZE;
@@ -806,7 +816,7 @@ app.get("/operator", requireOperatorAuth, async (req, res) => {
       hasNext
     }
   });
-});
+}));
 
 app.use((err, req, res, next) => {
   if (err.code === "EBADCSRFTOKEN") {
@@ -816,6 +826,25 @@ app.use((err, req, res, next) => {
     return res.redirect("/?fail=csrf#consult");
   }
   return next(err);
+});
+
+app.use((err, req, res, next) => {
+  console.error("[UnhandledError]", {
+    path: req.path,
+    method: req.method,
+    code: err?.code || "unknown",
+    message: err?.message || "unknown"
+  });
+  if (res.headersSent) {
+    return next(err);
+  }
+  if (req.path.startsWith("/operator")) {
+    return res.status(500).render("operator-login", {
+      error: "일시적인 서버 오류가 발생했습니다. 잠시 후 다시 시도해주세요.",
+      csrfToken: req.csrfToken ? req.csrfToken() : ""
+    });
+  }
+  return res.redirect("/?fail=server#consult");
 });
 
 initDb()
