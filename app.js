@@ -228,8 +228,23 @@ const LAST_INSURANCE_CHECK_LABELS = {
 };
 
 const REGION_LABELS = {
+  seoul: "서울특별시",
+  busan: "부산광역시",
+  daegu: "대구광역시",
+  incheon: "인천광역시",
+  gwangju: "광주광역시",
+  daejeon: "대전광역시",
+  ulsan: "울산광역시",
+  sejong: "세종특별자치시",
+  gyeonggi: "경기도",
+  gangwon: "강원특별자치도",
   chungbuk: "충청북도",
-  chungnam: "충청남도"
+  chungnam: "충청남도",
+  jeonbuk: "전북특별자치도",
+  jeonnam: "전라남도",
+  gyeongbuk: "경상북도",
+  gyeongnam: "경상남도",
+  jeju: "제주특별자치도"
 };
 
 const MONTHLY_BUDGET_LABELS = {
@@ -315,7 +330,25 @@ const consultPayloadSchema = z.object({
     .string()
     .transform((value) => normalizePhone(value))
     .refine((value) => /^01\d{8,9}$/.test(value), "invalid phone"),
-  region: z.enum(["chungbuk", "chungnam"]),
+  region: z.enum([
+    "seoul",
+    "busan",
+    "daegu",
+    "incheon",
+    "gwangju",
+    "daejeon",
+    "ulsan",
+    "sejong",
+    "gyeonggi",
+    "gangwon",
+    "chungbuk",
+    "chungnam",
+    "jeonbuk",
+    "jeonnam",
+    "gyeongbuk",
+    "gyeongnam",
+    "jeju"
+  ]),
   ageBand: z.enum(["20", "30", "40", "50", "60"]),
   gender: z.enum(["male", "female"]),
   monthlyBudget: z.enum(["under200", "200to300", "300to400", "400to500", "over500"]),
