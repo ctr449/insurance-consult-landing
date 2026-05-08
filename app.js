@@ -16,23 +16,29 @@ require("dotenv").config();
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
 const OPERATOR_USERNAME = process.env.OPERATOR_USERNAME || "operator";
-const OPERATOR_PASSWORD = process.env.OPERATOR_PASSWORD || "change-operator-password";
-const OPERATOR_PASSWORD_HASH = process.env.OPERATOR_PASSWORD_HASH || "";
+const OPERATOR_PASSWORD_HASH = String(process.env.OPERATOR_PASSWORD_HASH || "").trim();
 const OPERATOR_TOTP_SECRET = String(process.env.OPERATOR_TOTP_SECRET || "").trim();
-const SESSION_SECRET =
-  process.env.SESSION_SECRET ||
-  crypto.createHash("sha256").update(`${OPERATOR_PASSWORD}-default-session-secret`).digest("hex");
+const SESSION_SECRET = String(process.env.SESSION_SECRET || "").trim();
 const RETENTION_DAYS = Number(process.env.RETENTION_DAYS || 90);
 const OPERATOR_PAGE_SIZE = 50;
 const DUPLICATE_LEAD_WINDOW_HOURS = Number(process.env.DUPLICATE_LEAD_WINDOW_HOURS || 24);
 const AGREEMENT_VERSION = process.env.AGREEMENT_VERSION || "v1.0";
 const PURGE_SCHEDULE_HOUR = Number(process.env.PURGE_SCHEDULE_HOUR || 3);
 const PURGE_ON_STARTUP = String(process.env.PURGE_ON_STARTUP || "true").toLowerCase() !== "false";
+const DB_HEALTHCHECK_TIMEOUT_MS = Number(process.env.DB_HEALTHCHECK_TIMEOUT_MS || 2000);
+const ERROR_ALERT_WEBHOOK_URL = String(process.env.ERROR_ALERT_WEBHOOK_URL || "").trim();
+const ERROR_ALERT_COOLDOWN_SEC = Number(process.env.ERROR_ALERT_COOLDOWN_SEC || 60);
 const DATABASE_URL = process.env.DATABASE_URL || "";
 const isProduction = process.env.NODE_ENV === "production";
 const TRUST_PROXY = process.env.TRUST_PROXY || "1";
 const encryptionKeySource = process.env.PII_ENCRYPTION_KEY || "";
 const phoneHashHmacKeySource = String(process.env.PHONE_HASH_HMAC_KEY || "").trim();
+if (!SESSION_SECRET) {
+  throw new Error("SESSION_SECRET is required.");
+}
+if (!OPERATOR_PASSWORD_HASH) {
+  throw new Error("OPERATOR_PASSWORD_HASH is required.");
+}
 if (isProduction) {
   const requiredEnvKeys = [
     "DATABASE_URL",
@@ -50,13 +56,67 @@ if (isProduction) {
 const PII_ENCRYPTION_KEY =
   /^[a-fA-F0-9]{64}$/.test(encryptionKeySource)
     ? Buffer.from(encryptionKeySource, "hex")
-    : crypto.createHash("sha256").update(`${OPERATOR_PASSWORD}-fallback-pii-key`).digest();
+    : crypto.createHash("sha256").update(`${SESSION_SECRET}-fallback-pii-key`).digest();
 if (!DATABASE_URL) {
   throw new Error("DATABASE_URL is required. 3단계에서는 JSON fallback을 지원하지 않습니다.");
 }
 const dbPool = new Pool({
   connectionString: DATABASE_URL,
   ssl: isProduction ? { rejectUnauthorized: false } : false
+});
+const dbRuntimeState = {
+  lastErrorCode: "",
+  lastErrorAt: ""
+};
+const errorAlertState = {
+  lastSentByKey: new Map()
+};
+
+function shouldSendErrorAlert(key) {
+  const now = Date.now();
+  const cooldownMs = Number.isFinite(ERROR_ALERT_COOLDOWN_SEC)
+    ? Math.max(5, Math.min(3600, Number(ERROR_ALERT_COOLDOWN_SEC))) * 1000
+    : 60000;
+  const lastSentAt = errorAlertState.lastSentByKey.get(key) || 0;
+  if (now - lastSentAt < cooldownMs) {
+    return false;
+  }
+  errorAlertState.lastSentByKey.set(key, now);
+  return true;
+}
+
+function sendErrorAlert(title, data = {}, dedupeKey = "default") {
+  if (!ERROR_ALERT_WEBHOOK_URL) return;
+  const key = `${title}:${dedupeKey}`;
+  if (!shouldSendErrorAlert(key)) return;
+  fetch(ERROR_ALERT_WEBHOOK_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      title,
+      app: "insurance-consult-landing",
+      environment: process.env.NODE_ENV || "unknown",
+      timestamp: new Date().toISOString(),
+      ...data
+    })
+  }).catch(() => {});
+}
+
+dbPool.on("error", (err) => {
+  dbRuntimeState.lastErrorCode = String(err?.code || "unknown");
+  dbRuntimeState.lastErrorAt = new Date().toISOString();
+  console.error("[DBPoolError]", {
+    code: dbRuntimeState.lastErrorCode,
+    message: err?.message || "unknown"
+  });
+  sendErrorAlert(
+    "db_pool_error",
+    {
+      code: dbRuntimeState.lastErrorCode,
+      message: err?.message || "unknown"
+    },
+    dbRuntimeState.lastErrorCode
+  );
 });
 
 app.set("view engine", "ejs");
@@ -379,7 +439,7 @@ function sanitizePhone(phone) {
 }
 
 function hashPhone(phone) {
-  const hmacKey = phoneHashHmacKeySource || `${OPERATOR_PASSWORD}-phone-hash-dev-key`;
+  const hmacKey = phoneHashHmacKeySource || `${SESSION_SECRET}-phone-hash-dev-key`;
   return crypto.createHmac("sha256", hmacKey).update(phone).digest("hex");
 }
 
@@ -597,10 +657,7 @@ async function appendConsultRequest(request) {
 
 async function verifyOperatorCredentials(username, password) {
   if (username !== OPERATOR_USERNAME) return false;
-  if (OPERATOR_PASSWORD_HASH) {
-    return bcrypt.compare(password, OPERATOR_PASSWORD_HASH);
-  }
-  return password === OPERATOR_PASSWORD;
+  return bcrypt.compare(password, OPERATOR_PASSWORD_HASH);
 }
 
 function verifyOperatorOtp(otp) {
@@ -614,6 +671,17 @@ function withAsync(handler) {
   return (req, res, next) => {
     Promise.resolve(handler(req, res, next)).catch(next);
   };
+}
+
+async function checkDbHealth() {
+  const timeoutMs = Number.isFinite(DB_HEALTHCHECK_TIMEOUT_MS)
+    ? Math.max(500, Math.min(10000, Number(DB_HEALTHCHECK_TIMEOUT_MS)))
+    : 2000;
+  const timeoutPromise = new Promise((_, reject) => {
+    setTimeout(() => reject(Object.assign(new Error("db health timeout"), { code: "DB_HEALTH_TIMEOUT" })), timeoutMs);
+  });
+  await Promise.race([dbPool.query("SELECT 1"), timeoutPromise]);
+  return true;
 }
 
 function isOperatorAuthenticated(req) {
@@ -638,6 +706,24 @@ app.get("/", (req, res) => {
     csrfToken: req.csrfToken()
   });
 });
+
+app.get("/healthz", withAsync(async (req, res) => {
+  try {
+    await checkDbHealth();
+    return res.status(200).json({
+      ok: true,
+      db: "up",
+      timestamp: new Date().toISOString()
+    });
+  } catch (err) {
+    return res.status(503).json({
+      ok: false,
+      db: "down",
+      code: String(err?.code || dbRuntimeState.lastErrorCode || "unknown"),
+      timestamp: new Date().toISOString()
+    });
+  }
+}));
 
 app.post("/consult", withAsync(async (req, res) => {
   const parsed = parseConsultPayload(req.body);
@@ -776,14 +862,46 @@ app.use((err, req, res, next) => {
 });
 
 app.use((err, req, res, next) => {
+  const errCode = String(err?.code || "unknown");
+  const errMessage = String(err?.message || "unknown");
   console.error("[UnhandledError]", {
     path: req.path,
     method: req.method,
-    code: err?.code || "unknown",
-    message: err?.message || "unknown"
+    code: errCode,
+    message: errMessage
   });
+  sendErrorAlert(
+    "unhandled_error",
+    {
+      code: errCode,
+      message: errMessage,
+      path: req.path,
+      method: req.method
+    },
+    `${req.method}:${req.path}:${errCode}`
+  );
   if (res.headersSent) {
     return next(err);
+  }
+  const dbErrorCodes = new Set([
+    "ECONNRESET",
+    "ECONNREFUSED",
+    "ENOTFOUND",
+    "ETIMEDOUT",
+    "57P01",
+    "57P02",
+    "57P03",
+    "DB_HEALTH_TIMEOUT"
+  ]);
+  const isDbError = dbErrorCodes.has(String(err?.code || "")) || /database|connection|timeout/i.test(String(err?.message || ""));
+  if (isDbError) {
+    if (req.path.startsWith("/operator")) {
+      return res.status(503).render("operator-login", {
+        error: "DB 연결이 불안정합니다. 잠시 후 다시 시도해주세요.",
+        csrfToken: req.csrfToken ? req.csrfToken() : ""
+      });
+    }
+    return res.redirect("/?fail=db#consult");
   }
   if (req.path.startsWith("/operator")) {
     return res.status(500).render("operator-login", {
@@ -801,18 +919,20 @@ initDb()
         await purgeExpiredRequestsDb();
       } catch (err) {
         console.error("시작 시 상담 데이터 만료 정리 실패:", err?.message || err);
+        sendErrorAlert(
+          "startup_purge_failed",
+          {
+            code: String(err?.code || "unknown"),
+            message: String(err?.message || "unknown")
+          },
+          "startup_purge_failed"
+        );
       }
     }
     scheduleDailyPurge();
     app.listen(PORT, "0.0.0.0", () => {
       console.log(`보험 DB 사이트 실행 (포트 ${PORT})`);
       console.log("상담 저장소: PostgreSQL");
-      if (!OPERATOR_PASSWORD_HASH && OPERATOR_PASSWORD === "change-operator-password") {
-        console.log("운용자 보호를 위해 OPERATOR_PASSWORD 환경변수를 설정하세요.");
-      }
-      if (!OPERATOR_PASSWORD_HASH) {
-        console.log("권장: OPERATOR_PASSWORD_HASH(bcrypt)와 SESSION_SECRET을 .env에 설정하세요.");
-      }
       if (!/^[a-fA-F0-9]{64}$/.test(encryptionKeySource)) {
         console.log("PII_ENCRYPTION_KEY 미설정: 안전한 64자리 hex 키를 .env에 설정하세요.");
       }
@@ -820,5 +940,13 @@ initDb()
   })
   .catch((err) => {
     console.error("DB 초기화 실패:", err);
+    sendErrorAlert(
+      "db_init_failed",
+      {
+        code: String(err?.code || "unknown"),
+        message: String(err?.message || "unknown")
+      },
+      "db_init_failed"
+    );
     process.exit(1);
   });
