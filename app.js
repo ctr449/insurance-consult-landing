@@ -58,7 +58,10 @@ const operatorLoginLimiter = rateLimit({
   max: 5,
   standardHeaders: true,
   legacyHeaders: false,
-  message: "로그인 시도가 너무 많습니다. 잠시 후 다시 시도해주세요."
+  message: "로그인 시도가 너무 많습니다. 잠시 후 다시 시도해주세요.",
+  handler: (req, res) => {
+    res.status(429).send("로그인 시도가 너무 많습니다. 잠시 후 다시 시도해주세요.");
+  }
 });
 
 function purgeExpiredRequests(requests) {
@@ -129,7 +132,12 @@ function sanitizeName(name) {
 }
 
 function sanitizePhone(phone) {
-  const digits = String(phone || "").replace(/\D/g, "");
+  const raw = String(phone || "");
+  const digitsRaw = raw.replace(/\D/g, "");
+  const digits =
+    digitsRaw.startsWith("82") && digitsRaw.length >= 11 && digitsRaw.length <= 12
+      ? `0${digitsRaw.slice(2)}`
+      : digitsRaw;
   return /^01\d{8,9}$/.test(digits) ? digits : "";
 }
 
