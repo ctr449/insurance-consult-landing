@@ -26,10 +26,27 @@ const RETENTION_DAYS = Number(process.env.RETENTION_DAYS || 90);
 const OPERATOR_PAGE_SIZE = 50;
 const DUPLICATE_LEAD_WINDOW_HOURS = Number(process.env.DUPLICATE_LEAD_WINDOW_HOURS || 24);
 const AGREEMENT_VERSION = process.env.AGREEMENT_VERSION || "v1.0";
+const PURGE_SCHEDULE_HOUR = Number(process.env.PURGE_SCHEDULE_HOUR || 3);
+const PURGE_ON_STARTUP = String(process.env.PURGE_ON_STARTUP || "true").toLowerCase() !== "false";
 const DATABASE_URL = process.env.DATABASE_URL || "";
 const isProduction = process.env.NODE_ENV === "production";
 const TRUST_PROXY = process.env.TRUST_PROXY || "1";
 const encryptionKeySource = process.env.PII_ENCRYPTION_KEY || "";
+const phoneHashHmacKeySource = String(process.env.PHONE_HASH_HMAC_KEY || "").trim();
+if (isProduction) {
+  const requiredEnvKeys = [
+    "DATABASE_URL",
+    "SESSION_SECRET",
+    "PII_ENCRYPTION_KEY",
+    "OPERATOR_PASSWORD_HASH",
+    "OPERATOR_TOTP_SECRET",
+    "PHONE_HASH_HMAC_KEY"
+  ];
+  const missingEnvKeys = requiredEnvKeys.filter((key) => !String(process.env[key] || "").trim());
+  if (missingEnvKeys.length > 0) {
+    throw new Error(`Missing required env in production: ${missingEnvKeys.join(", ")}`);
+  }
+}
 const PII_ENCRYPTION_KEY =
   /^[a-fA-F0-9]{64}$/.test(encryptionKeySource)
     ? Buffer.from(encryptionKeySource, "hex")
@@ -362,6 +379,11 @@ function sanitizePhone(phone) {
 }
 
 function hashPhone(phone) {
+  const hmacKey = phoneHashHmacKeySource || `${OPERATOR_PASSWORD}-phone-hash-dev-key`;
+  return crypto.createHmac("sha256", hmacKey).update(phone).digest("hex");
+}
+
+function hashPhoneLegacy(phone) {
   return crypto.createHash("sha256").update(phone).digest("hex");
 }
 
@@ -441,8 +463,33 @@ async function purgeExpiredRequestsDb() {
   );
 }
 
+function scheduleDailyPurge() {
+  const safeHour = Number.isFinite(PURGE_SCHEDULE_HOUR)
+    ? Math.max(0, Math.min(23, Math.trunc(PURGE_SCHEDULE_HOUR)))
+    : 3;
+  const scheduleNext = () => {
+    const now = new Date();
+    const next = new Date(now);
+    next.setHours(safeHour, 0, 0, 0);
+    if (next.getTime() <= now.getTime()) {
+      next.setDate(next.getDate() + 1);
+    }
+    const waitMs = next.getTime() - now.getTime();
+    setTimeout(async () => {
+      try {
+        await purgeExpiredRequestsDb();
+        console.log(`상담 데이터 만료 정리 완료 (${RETENTION_DAYS}일 기준)`);
+      } catch (err) {
+        console.error("상담 데이터 만료 정리 실패:", err?.message || err);
+      } finally {
+        scheduleNext();
+      }
+    }, waitMs);
+  };
+  scheduleNext();
+}
+
 async function readConsultRequests({ limit = OPERATOR_PAGE_SIZE, offset = 0 } = {}) {
-  await purgeExpiredRequestsDb();
   const safeLimit = Number.isFinite(limit) ? Math.max(1, Math.min(200, Number(limit))) : OPERATOR_PAGE_SIZE;
   const safeOffset = Number.isFinite(offset) ? Math.max(0, Number(offset)) : 0;
   const result = await dbPool.query(
@@ -472,35 +519,6 @@ async function readConsultRequests({ limit = OPERATOR_PAGE_SIZE, offset = 0 } = 
     ,
     [safeLimit, safeOffset]
   );
-  // #region agent log
-  fetch("http://127.0.0.1:7561/ingest/5c01f500-4c66-473d-982d-543e2111d81d", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "bdbd90" },
-    body: JSON.stringify({
-      sessionId: "bdbd90",
-      runId: "run-consult-list",
-      hypothesisId: "H3",
-      location: "app.js:readConsultRequests result",
-      message: "latest row selected fields",
-      data: {
-        rowCount: result.rows.length,
-        latestHasMonthlyBudget:
-          result.rows.length > 0 ? Boolean(result.rows[0].monthlyBudget) : false,
-        latestHasAvailableTime:
-          result.rows.length > 0 ? Boolean(result.rows[0].availableTime) : false,
-        latestHasDesiredCoverage:
-          result.rows.length > 0 ? Boolean(result.rows[0].desiredCoverage) : false,
-        latestExistingInsuranceType:
-          result.rows.length > 0
-            ? Array.isArray(result.rows[0].existingInsurance)
-              ? "array"
-              : typeof result.rows[0].existingInsurance
-            : "none"
-      },
-      timestamp: Date.now()
-    })
-  }).catch(() => {});
-  // #endregion
   return result.rows.map((row) => ({
     ...row,
     createdAt: new Date(row.createdAt).toISOString()
@@ -512,45 +530,25 @@ async function readConsultRequestCount() {
   return result.rows[0]?.total || 0;
 }
 
-async function hasRecentDuplicateLead(phoneHash, windowHours = DUPLICATE_LEAD_WINDOW_HOURS) {
+async function hasRecentDuplicateLead(phone, windowHours = DUPLICATE_LEAD_WINDOW_HOURS) {
+  const currentHash = hashPhone(phone);
+  const legacyHash = hashPhoneLegacy(phone);
+  const candidateHashes = [...new Set([currentHash, legacyHash])];
   const safeWindowHours = Number.isFinite(windowHours) ? Math.max(1, Math.min(72, Number(windowHours))) : 24;
   const result = await dbPool.query(
     `
       SELECT 1
       FROM consult_requests
-      WHERE phone_hash = $1
+      WHERE phone_hash = ANY($1::text[])
         AND created_at >= NOW() - ($2::int * INTERVAL '1 hour')
       LIMIT 1
     `,
-    [phoneHash, safeWindowHours]
+    [candidateHashes, safeWindowHours]
   );
   return result.rows.length > 0;
 }
 
 async function appendConsultRequest(request) {
-  await purgeExpiredRequestsDb();
-  // #region agent log
-  fetch("http://127.0.0.1:7561/ingest/5c01f500-4c66-473d-982d-543e2111d81d", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "bdbd90" },
-    body: JSON.stringify({
-      sessionId: "bdbd90",
-      runId: "run-consult-list",
-      hypothesisId: "H2",
-      location: "app.js:appendConsultRequest before insert",
-      message: "insert payload field presence",
-      data: {
-        hasMonthlyBudget: Boolean(request.monthlyBudget),
-        hasAvailableTime: Boolean(request.availableTime),
-        hasDesiredCoverage: Boolean(request.desiredCoverage),
-        existingInsuranceCount: Array.isArray(request.existingInsurance)
-          ? request.existingInsurance.length
-          : -1
-      },
-      timestamp: Date.now()
-    })
-  }).catch(() => {});
-  // #endregion
   try {
     await dbPool.query(
       `
@@ -592,37 +590,7 @@ async function appendConsultRequest(request) {
       request.createdAt
       ]
     );
-    // #region agent log
-    fetch("http://127.0.0.1:7561/ingest/5c01f500-4c66-473d-982d-543e2111d81d", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "bdbd90" },
-      body: JSON.stringify({
-        sessionId: "bdbd90",
-        runId: "run-consult-list",
-        hypothesisId: "H2",
-        location: "app.js:appendConsultRequest after insert",
-        message: "insert query success",
-        data: { inserted: true },
-        timestamp: Date.now()
-      })
-    }).catch(() => {});
-    // #endregion
   } catch (error) {
-    // #region agent log
-    fetch("http://127.0.0.1:7561/ingest/5c01f500-4c66-473d-982d-543e2111d81d", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "bdbd90" },
-      body: JSON.stringify({
-        sessionId: "bdbd90",
-        runId: "run-consult-list",
-        hypothesisId: "H4",
-        location: "app.js:appendConsultRequest insert error",
-        message: "insert query failed",
-        data: { code: error && error.code ? String(error.code) : "unknown" },
-        timestamp: Date.now()
-      })
-    }).catch(() => {});
-    // #endregion
     throw error;
   }
 }
@@ -673,27 +641,6 @@ app.get("/", (req, res) => {
 
 app.post("/consult", withAsync(async (req, res) => {
   const parsed = parseConsultPayload(req.body);
-  // #region agent log
-  fetch("http://127.0.0.1:7561/ingest/5c01f500-4c66-473d-982d-543e2111d81d", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "bdbd90" },
-    body: JSON.stringify({
-      sessionId: "bdbd90",
-      runId: "run-consult-list",
-      hypothesisId: "H1",
-      location: "app.js:/consult parsed",
-      message: "consult payload parse result",
-      data: {
-        success: parsed.success,
-        hasMonthlyBudget: parsed.success ? Boolean(parsed.data.monthlyBudget) : false,
-        hasAvailableTime: parsed.success ? Boolean(parsed.data.availableTime) : false,
-        hasDesiredCoverage: parsed.success ? Boolean(parsed.data.desiredCoverage) : false,
-        existingInsuranceCount: parsed.success ? parsed.data.existingInsurance.length : -1
-      },
-      timestamp: Date.now()
-    })
-  }).catch(() => {});
-  // #endregion
   if (!parsed.success) {
     await writeAuditLog(req, "consult_create", "validation_fail", "consult_request", "new");
     return res.redirect("/?fail=validation#consult");
@@ -708,7 +655,7 @@ app.post("/consult", withAsync(async (req, res) => {
 
   const safePhone = sanitizePhone(payload.phone);
   const phoneHash = hashPhone(safePhone);
-  if (await hasRecentDuplicateLead(phoneHash)) {
+  if (await hasRecentDuplicateLead(safePhone)) {
     await writeAuditLog(req, "consult_create", "duplicate_blocked", "consult_request", phoneHash.slice(0, 12));
     return res.redirect("/?fail=duplicate#consult");
   }
@@ -848,7 +795,15 @@ app.use((err, req, res, next) => {
 });
 
 initDb()
-  .then(() => {
+  .then(async () => {
+    if (PURGE_ON_STARTUP) {
+      try {
+        await purgeExpiredRequestsDb();
+      } catch (err) {
+        console.error("시작 시 상담 데이터 만료 정리 실패:", err?.message || err);
+      }
+    }
+    scheduleDailyPurge();
     app.listen(PORT, "0.0.0.0", () => {
       console.log(`보험 DB 사이트 실행 (포트 ${PORT})`);
       console.log("상담 저장소: PostgreSQL");
