@@ -22,15 +22,19 @@
       <div class="operator-list">
         <% requests.forEach((item) => { %>
         <article class="operator-card">
-          <p><strong>이름</strong>: <%= item.name %></p>
-          <p><strong>연락처</strong>: <%= item.phone %></p>
-          <p><strong>지역</strong>: <%= item.regionLabel || "-" %></p>
           <p><strong>상담 희망 여부</strong>: <%= item.consultHope === "yes" ? "희망" : "미희망" %></p>
+          <p><strong>상담 가능 시간</strong>: <%= item.availableTimeLabel || "-" %></p>
+          <p><strong>연락처</strong>: <%= item.phone %></p>
+          <p><strong>이름</strong>: <%= item.name %></p>
+          <p><strong>월 예산</strong>: <%= item.monthlyBudgetLabel || "-" %></p>
+          <p><strong>원하는 보장</strong>: <%= item.desiredCoverageLabel || "-" %></p>
+          <p><strong>기존 보험</strong>: <%= item.existingInsuranceLabels || "-" %></p>
           <p>
             <strong>현재 보험 가입 여부</strong>:
             <%= item.insuredStatus === "yes" ? "있다" : item.insuredStatus === "no" ? "없다" : "잘 모르겠다" %>
           </p>
           <p><strong>최근 보험 점검</strong>: <%= item.lastInsuranceCheckLabel %></p>
+          <p><strong>지역</strong>: <%= item.regionLabel || "-" %></p>
           <p><strong>연령대</strong>: <%= item.ageLabel %></p>
           <p>
             <strong>성별</strong>:

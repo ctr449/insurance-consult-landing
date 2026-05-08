@@ -128,7 +128,40 @@ const REGION_LABELS = {
   chungnam: "충청남도"
 };
 
+const MONTHLY_BUDGET_LABELS = {
+  "200": "200만원",
+  "300": "300만원",
+  "400": "400만원",
+  "500": "500만원",
+  "600": "600만원",
+  "700": "700만원",
+  "800": "800만원",
+  "900": "900만원",
+  "1000plus": "1000만원+"
+};
+
+const AVAILABLE_TIME_LABELS = {
+  morning: "오전 (09:00~12:00)",
+  afternoon: "오후 (12:00~18:00)",
+  evening: "저녁 (18:00~21:00)",
+  anytime: "상관없음"
+};
+
+const DESIRED_COVERAGE_LABELS = {
+  life: "생명보험",
+  nonlife: "손해보험",
+  third: "제3보험"
+};
+
+const EXISTING_INSURANCE_LABELS = {
+  life: "생명보험",
+  nonlife: "손해보험",
+  third: "제3보험",
+  unknown: "잘 모르겠다"
+};
+
 function toDisplayRequest(item) {
+  const existingInsurance = Array.isArray(item.existingInsurance) ? item.existingInsurance : [];
   return {
     ...item,
     name: item.nameEnc ? decryptPII(item.nameEnc) : item.name || "",
@@ -136,6 +169,25 @@ function toDisplayRequest(item) {
     ageLabel: formatAgeLabel(item),
     regionLabel:
       item.region && REGION_LABELS[item.region] ? REGION_LABELS[item.region] : item.regionLabel || "-",
+    monthlyBudgetLabel:
+      item.monthlyBudget && MONTHLY_BUDGET_LABELS[item.monthlyBudget]
+        ? MONTHLY_BUDGET_LABELS[item.monthlyBudget]
+        : "-",
+    availableTimeLabel:
+      item.availableTime && AVAILABLE_TIME_LABELS[item.availableTime]
+        ? AVAILABLE_TIME_LABELS[item.availableTime]
+        : "-",
+    desiredCoverageLabel:
+      item.desiredCoverage && DESIRED_COVERAGE_LABELS[item.desiredCoverage]
+        ? DESIRED_COVERAGE_LABELS[item.desiredCoverage]
+        : "-",
+    existingInsuranceLabels:
+      existingInsurance.length > 0
+        ? existingInsurance
+            .map((code) => EXISTING_INSURANCE_LABELS[code])
+            .filter(Boolean)
+            .join(", ")
+        : "-",
     lastInsuranceCheckLabel:
       item.lastInsuranceCheck && LAST_INSURANCE_CHECK_LABELS[item.lastInsuranceCheck]
         ? LAST_INSURANCE_CHECK_LABELS[item.lastInsuranceCheck]
@@ -160,13 +212,35 @@ const consultPayloadSchema = z.object({
   region: z.enum(["chungbuk", "chungnam"]),
   ageBand: z.enum(["20", "30", "40", "50", "60"]),
   gender: z.enum(["male", "female"]),
+  monthlyBudget: z.enum(["200", "300", "400", "500", "600", "700", "800", "900", "1000plus"]),
+  availableTime: z.enum(["morning", "afternoon", "evening", "anytime"]),
+  desiredCoverage: z.enum(["life", "nonlife", "third"]),
   consultHope: z.enum(["yes", "no"]).default("yes"),
   insuredStatus: z.enum(["yes", "no", "unknown"]).default("unknown"),
+  existingInsurance: z.array(z.enum(["life", "nonlife", "third", "unknown"])).default([]),
   lastInsuranceCheck: z.enum(["within3m", "within6m", "within1y", "over1y", "unknown"]),
   agreePrivacy: z.boolean(),
   agreeThirdParty: z.boolean(),
   agreeContact: z.boolean()
-});
+})
+  .superRefine((data, ctx) => {
+    if (data.insuredStatus === "yes" && data.existingInsurance.length === 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["existingInsurance"],
+        message: "기존 보험 선택 필요"
+      });
+    }
+  });
+
+function normalizeExistingInsurance(value) {
+  const rawList = Array.isArray(value) ? value : [value];
+  const normalized = rawList
+    .map((item) => String(item || "").toLowerCase())
+    .filter((item) => ["life", "nonlife", "third", "unknown"].includes(item));
+  const unique = [...new Set(normalized)];
+  return unique.includes("unknown") ? ["unknown"] : unique;
+}
 
 function parseConsultPayload(body) {
   return consultPayloadSchema.safeParse({
@@ -175,8 +249,12 @@ function parseConsultPayload(body) {
     region: String(body.region || ""),
     ageBand: String(body.ageBand || ""),
     gender: String(body.gender || "").toLowerCase(),
+    monthlyBudget: String(body.monthlyBudget || ""),
+    availableTime: String(body.availableTime || ""),
+    desiredCoverage: String(body.desiredCoverage || ""),
     consultHope: body.consultHope ? String(body.consultHope || "").toLowerCase() : "yes",
     insuredStatus: body.insuredStatus ? String(body.insuredStatus || "").toLowerCase() : "unknown",
+    existingInsurance: normalizeExistingInsurance(body.existingInsurance),
     lastInsuranceCheck: String(body.lastInsuranceCheck || ""),
     agreePrivacy: Boolean(body.agreePrivacy),
     agreeThirdParty: Boolean(body.agreeThirdParty),
@@ -265,12 +343,32 @@ async function initDb() {
       region TEXT NOT NULL,
       age_band TEXT NOT NULL,
       gender TEXT NOT NULL,
+      monthly_budget TEXT NOT NULL DEFAULT '200',
+      available_time TEXT NOT NULL DEFAULT 'anytime',
+      desired_coverage TEXT NOT NULL DEFAULT 'life',
+      existing_insurance JSONB NOT NULL DEFAULT '[]'::jsonb,
       consult_hope TEXT NOT NULL,
       insured_status TEXT NOT NULL,
       last_insurance_check TEXT NOT NULL,
       agreements JSONB NOT NULL,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
+  `);
+  await dbPool.query(`
+    ALTER TABLE consult_requests
+    ADD COLUMN IF NOT EXISTS monthly_budget TEXT NOT NULL DEFAULT '200'
+  `);
+  await dbPool.query(`
+    ALTER TABLE consult_requests
+    ADD COLUMN IF NOT EXISTS available_time TEXT NOT NULL DEFAULT 'anytime'
+  `);
+  await dbPool.query(`
+    ALTER TABLE consult_requests
+    ADD COLUMN IF NOT EXISTS desired_coverage TEXT NOT NULL DEFAULT 'life'
+  `);
+  await dbPool.query(`
+    ALTER TABLE consult_requests
+    ADD COLUMN IF NOT EXISTS existing_insurance JSONB NOT NULL DEFAULT '[]'::jsonb
   `);
   await dbPool.query(`
     CREATE TABLE IF NOT EXISTS audit_logs (
@@ -305,6 +403,10 @@ async function readConsultRequests() {
         region,
         age_band AS "ageBand",
         gender,
+        monthly_budget AS "monthlyBudget",
+        available_time AS "availableTime",
+        desired_coverage AS "desiredCoverage",
+        existing_insurance AS "existingInsurance",
         consult_hope AS "consultHope",
         insured_status AS "insuredStatus",
         last_insurance_check AS "lastInsuranceCheck",
@@ -330,12 +432,16 @@ async function appendConsultRequest(request) {
         region,
         age_band,
         gender,
+        monthly_budget,
+        available_time,
+        desired_coverage,
+        existing_insurance,
         consult_hope,
         insured_status,
         last_insurance_check,
         agreements,
         created_at
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10::timestamptz)
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11,$12,$13::jsonb,$14::timestamptz)
     `,
     [
       request.nameEnc,
@@ -343,6 +449,10 @@ async function appendConsultRequest(request) {
       request.region,
       request.ageBand,
       request.gender,
+      request.monthlyBudget,
+      request.availableTime,
+      request.desiredCoverage,
+      JSON.stringify(request.existingInsurance || []),
       request.consultHope,
       request.insuredStatus,
       request.lastInsuranceCheck,
@@ -405,6 +515,10 @@ app.post("/consult", async (req, res) => {
     region: sanitizeRegion(payload.region),
     ageBand: sanitizeAgeBand(payload.ageBand),
     gender: sanitizeGender(payload.gender),
+    monthlyBudget: payload.monthlyBudget,
+    availableTime: payload.availableTime,
+    desiredCoverage: payload.desiredCoverage,
+    existingInsurance: payload.existingInsurance,
     consultHope: payload.consultHope,
     insuredStatus: sanitizeInsuredStatus(payload.insuredStatus),
     lastInsuranceCheck: sanitizeLastInsuranceCheck(payload.lastInsuranceCheck),

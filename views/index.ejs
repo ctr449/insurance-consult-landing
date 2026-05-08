@@ -57,16 +57,35 @@
       <p class="error">동의 항목을 모두 체크해야 상담 신청이 가능합니다.</p>
       <% } %>
       <% if (fail === "validation") { %>
-      <p class="error">입력값을 다시 확인해주세요. (이름/연락처/지역/연령대/성별/최근 점검)</p>
+      <p class="error">
+        입력값을 다시 확인해주세요. (이름/연락처/지역/월 예산/상담 가능 시간/원하는 보장/기존 보험/연령대/성별/최근 점검)
+      </p>
       <% } %>
       <% if (fail === "csrf") { %>
       <p class="error">보안 토큰이 만료되었습니다. 다시 제출해주세요.</p>
       <% } %>
       <form action="/consult" method="POST" class="consult-form">
         <input type="hidden" name="_csrf" value="<%= csrfToken %>" />
+        <div class="field-group">
+          <span class="field-label">상담 희망 여부</span>
+          <div class="choice-chips choice-chips--2">
+            <label class="chip"
+              ><input type="radio" name="consultHope" value="yes" checked /><span>희망</span></label
+            >
+            <label class="chip"
+              ><input type="radio" name="consultHope" value="no" /><span>미희망</span></label
+            >
+          </div>
+        </div>
         <div class="field-group field-group--text">
-          <label class="field-label" for="applicant-name">이름</label>
-          <input id="applicant-name" name="name" placeholder="이름을 입력해주세요" required />
+          <label class="field-label" for="applicant-available-time">상담 가능 시간</label>
+          <select id="applicant-available-time" name="availableTime" required>
+            <option value="" selected disabled>상담 가능 시간 선택</option>
+            <option value="morning">오전 (09:00~12:00)</option>
+            <option value="afternoon">오후 (12:00~18:00)</option>
+            <option value="evening">저녁 (18:00~21:00)</option>
+            <option value="anytime">상관없음</option>
+          </select>
         </div>
         <div class="field-group field-group--text">
           <label class="field-label" for="applicant-phone">연락처</label>
@@ -81,23 +100,32 @@
           />
         </div>
         <div class="field-group field-group--text">
-          <label class="field-label" for="applicant-region">지역</label>
-          <select id="applicant-region" name="region" required>
-            <option value="" selected disabled>지역 선택</option>
-            <option value="chungbuk">충청북도</option>
-            <option value="chungnam">충청남도</option>
+          <label class="field-label" for="applicant-name">이름</label>
+          <input id="applicant-name" name="name" placeholder="이름을 입력해주세요" required />
+        </div>
+        <div class="field-group field-group--text">
+          <label class="field-label" for="applicant-budget">월 예산</label>
+          <select id="applicant-budget" name="monthlyBudget" required>
+            <option value="" selected disabled>월 예산 선택</option>
+            <option value="200">200만원</option>
+            <option value="300">300만원</option>
+            <option value="400">400만원</option>
+            <option value="500">500만원</option>
+            <option value="600">600만원</option>
+            <option value="700">700만원</option>
+            <option value="800">800만원</option>
+            <option value="900">900만원</option>
+            <option value="1000plus">1000만원+</option>
           </select>
         </div>
-        <div class="field-group">
-          <span class="field-label">상담 희망 여부</span>
-          <div class="choice-chips choice-chips--2">
-            <label class="chip"
-              ><input type="radio" name="consultHope" value="yes" checked /><span>희망</span></label
-            >
-            <label class="chip"
-              ><input type="radio" name="consultHope" value="no" /><span>미희망</span></label
-            >
-          </div>
+        <div class="field-group field-group--text">
+          <label class="field-label" for="applicant-coverage">원하는 보장</label>
+          <select id="applicant-coverage" name="desiredCoverage" required>
+            <option value="" selected disabled>원하는 보장 선택</option>
+            <option value="life">생명보험</option>
+            <option value="nonlife">손해보험</option>
+            <option value="third">제3보험</option>
+          </select>
         </div>
         <div class="field-group">
           <span class="field-label">현재 보험 가입 여부</span>
@@ -112,6 +140,25 @@
               ><input type="radio" name="insuredStatus" value="unknown" /><span>잘 모르겠다</span></label
             >
           </div>
+        </div>
+        <div class="field-group" id="existing-insurance-group">
+          <span class="field-label">기존 보험 (중복 선택 가능)</span>
+          <label class="check-item">
+            <input type="checkbox" name="existingInsurance" value="life" />
+            생명보험
+          </label>
+          <label class="check-item">
+            <input type="checkbox" name="existingInsurance" value="nonlife" />
+            손해보험
+          </label>
+          <label class="check-item">
+            <input type="checkbox" name="existingInsurance" value="third" />
+            제3보험
+          </label>
+          <label class="check-item">
+            <input type="checkbox" name="existingInsurance" value="unknown" />
+            잘 모르겠다
+          </label>
         </div>
         <div class="field-group">
           <span class="field-label">최근 보험 점검 경험</span>
@@ -134,6 +181,14 @@
               ><input type="radio" name="lastInsuranceCheck" value="unknown" /><span>기억 안 남</span></label
             >
           </div>
+        </div>
+        <div class="field-group field-group--text">
+          <label class="field-label" for="applicant-region">지역</label>
+          <select id="applicant-region" name="region" required>
+            <option value="" selected disabled>지역 선택</option>
+            <option value="chungbuk">충청북도</option>
+            <option value="chungnam">충청남도</option>
+          </select>
         </div>
         <div class="field-group">
           <span class="field-label">연령대</span>
@@ -186,5 +241,41 @@
         ※ 개인 상황에 따라 상담 내용은 달라질 수 있습니다.
       </p>
     </section>
+    <script>
+      (function () {
+        const statusInputs = document.querySelectorAll('input[name="insuredStatus"]');
+        const group = document.getElementById("existing-insurance-group");
+        const checkboxes = group ? group.querySelectorAll('input[name="existingInsurance"]') : [];
+        if (!group || statusInputs.length === 0) return;
+
+        const syncVisibility = () => {
+          const selected = document.querySelector('input[name="insuredStatus"]:checked');
+          const show = selected && selected.value === "yes";
+          group.style.display = show ? "block" : "none";
+          if (!show) {
+            checkboxes.forEach((el) => {
+              el.checked = false;
+            });
+          }
+        };
+
+        const syncUnknownRule = (event) => {
+          const target = event.target;
+          if (!target || target.name !== "existingInsurance") return;
+          if (target.value === "unknown" && target.checked) {
+            checkboxes.forEach((el) => {
+              if (el.value !== "unknown") el.checked = false;
+            });
+          } else if (target.value !== "unknown" && target.checked) {
+            const unknown = group.querySelector('input[name="existingInsurance"][value="unknown"]');
+            if (unknown) unknown.checked = false;
+          }
+        };
+
+        statusInputs.forEach((el) => el.addEventListener("change", syncVisibility));
+        checkboxes.forEach((el) => el.addEventListener("change", syncUnknownRule));
+        syncVisibility();
+      })();
+    </script>
   </body>
 </html>
