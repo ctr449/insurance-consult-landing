@@ -58,7 +58,7 @@
       <% } %>
       <% if (fail === "validation") { %>
       <p class="error">
-        입력값을 다시 확인해주세요. (이름/연락처/지역/월 예산/상담 가능 시간/원하는 보장/기존 보험/연령대/성별/최근 점검)
+        입력값을 다시 확인해주세요. (이름/연락처/지역/월 예산/상담 가능 시간/현재 보험 상태/연령대/성별/최근 점검)
       </p>
       <% } %>
       <% if (fail === "duplicate") { %>
@@ -90,9 +90,18 @@
           <label class="field-label" for="applicant-available-time">상담 가능 시간</label>
           <select id="applicant-available-time" name="availableTime" required>
             <option value="" selected disabled>상담 가능 시간 선택</option>
-            <option value="morning">오전 (09:00~12:00)</option>
-            <option value="afternoon">오후 (12:00~18:00)</option>
-            <option value="evening">저녁 (18:00~21:00)</option>
+            <option value="t09">09:00~10:00</option>
+            <option value="t10">10:00~11:00</option>
+            <option value="t11">11:00~12:00</option>
+            <option value="t12">12:00~13:00</option>
+            <option value="t13">13:00~14:00</option>
+            <option value="t14">14:00~15:00</option>
+            <option value="t15">15:00~16:00</option>
+            <option value="t16">16:00~17:00</option>
+            <option value="t17">17:00~18:00</option>
+            <option value="t18">18:00~19:00</option>
+            <option value="t19">19:00~20:00</option>
+            <option value="t20">20:00~21:00</option>
             <option value="anytime">상관없음</option>
           </select>
         </div>
@@ -116,24 +125,11 @@
           <label class="field-label" for="applicant-budget">월 예산</label>
           <select id="applicant-budget" name="monthlyBudget" required>
             <option value="" selected disabled>월 예산 선택</option>
-            <option value="200">200만원</option>
-            <option value="300">300만원</option>
-            <option value="400">400만원</option>
-            <option value="500">500만원</option>
-            <option value="600">600만원</option>
-            <option value="700">700만원</option>
-            <option value="800">800만원</option>
-            <option value="900">900만원</option>
-            <option value="1000plus">1000만원+</option>
-          </select>
-        </div>
-        <div class="field-group field-group--text">
-          <label class="field-label" for="applicant-coverage">원하는 보장</label>
-          <select id="applicant-coverage" name="desiredCoverage" required>
-            <option value="" selected disabled>원하는 보장 선택</option>
-            <option value="life">생명보험</option>
-            <option value="nonlife">손해보험</option>
-            <option value="third">제3보험</option>
+            <option value="under200">200만원 미만</option>
+            <option value="200to300">200~300만원</option>
+            <option value="300to400">300~400만원</option>
+            <option value="400to500">400~500만원</option>
+            <option value="over500">500만원 이상</option>
           </select>
         </div>
         <div class="field-group">
@@ -150,24 +146,19 @@
             >
           </div>
         </div>
-        <div class="field-group" id="existing-insurance-group">
-          <span class="field-label">기존 보험 (중복 선택 가능)</span>
-          <label class="check-item">
-            <input type="checkbox" name="existingInsurance" value="life" />
-            생명보험
-          </label>
-          <label class="check-item">
-            <input type="checkbox" name="existingInsurance" value="nonlife" />
-            손해보험
-          </label>
-          <label class="check-item">
-            <input type="checkbox" name="existingInsurance" value="third" />
-            제3보험
-          </label>
-          <label class="check-item">
-            <input type="checkbox" name="existingInsurance" value="unknown" />
-            잘 모르겠다
-          </label>
+        <div class="field-group">
+          <span class="field-label">현재 보험 상태</span>
+          <div class="choice-chips choice-chips--insured">
+            <label class="chip"
+              ><input type="radio" name="insuranceState" value="satisfied" checked /><span>만족</span></label
+            >
+            <label class="chip"
+              ><input type="radio" name="insuranceState" value="dissatisfied" /><span>불만족</span></label
+            >
+            <label class="chip"
+              ><input type="radio" name="insuranceState" value="unknown" /><span>잘모르겠음</span></label
+            >
+          </div>
         </div>
         <div class="field-group">
           <span class="field-label">최근 보험 점검 경험</span>
@@ -250,41 +241,5 @@
         ※ 개인 상황에 따라 상담 내용은 달라질 수 있습니다.
       </p>
     </section>
-    <script>
-      (function () {
-        const statusInputs = document.querySelectorAll('input[name="insuredStatus"]');
-        const group = document.getElementById("existing-insurance-group");
-        const checkboxes = group ? group.querySelectorAll('input[name="existingInsurance"]') : [];
-        if (!group || statusInputs.length === 0) return;
-
-        const syncVisibility = () => {
-          const selected = document.querySelector('input[name="insuredStatus"]:checked');
-          const show = selected && selected.value === "yes";
-          group.style.display = show ? "block" : "none";
-          if (!show) {
-            checkboxes.forEach((el) => {
-              el.checked = false;
-            });
-          }
-        };
-
-        const syncUnknownRule = (event) => {
-          const target = event.target;
-          if (!target || target.name !== "existingInsurance") return;
-          if (target.value === "unknown" && target.checked) {
-            checkboxes.forEach((el) => {
-              if (el.value !== "unknown") el.checked = false;
-            });
-          } else if (target.value !== "unknown" && target.checked) {
-            const unknown = group.querySelector('input[name="existingInsurance"][value="unknown"]');
-            if (unknown) unknown.checked = false;
-          }
-        };
-
-        statusInputs.forEach((el) => el.addEventListener("change", syncVisibility));
-        checkboxes.forEach((el) => el.addEventListener("change", syncUnknownRule));
-        syncVisibility();
-      })();
-    </script>
   </body>
 </html>

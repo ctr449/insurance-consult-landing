@@ -233,6 +233,11 @@ const REGION_LABELS = {
 };
 
 const MONTHLY_BUDGET_LABELS = {
+  under200: "200만원 미만",
+  "200to300": "200~300만원",
+  "300to400": "300~400만원",
+  "400to500": "400~500만원",
+  over500: "500만원 이상",
   "200": "200만원",
   "300": "300만원",
   "400": "400만원",
@@ -245,27 +250,31 @@ const MONTHLY_BUDGET_LABELS = {
 };
 
 const AVAILABLE_TIME_LABELS = {
+  t09: "09:00~10:00",
+  t10: "10:00~11:00",
+  t11: "11:00~12:00",
+  t12: "12:00~13:00",
+  t13: "13:00~14:00",
+  t14: "14:00~15:00",
+  t15: "15:00~16:00",
+  t16: "16:00~17:00",
+  t17: "17:00~18:00",
+  t18: "18:00~19:00",
+  t19: "19:00~20:00",
+  t20: "20:00~21:00",
   morning: "오전 (09:00~12:00)",
   afternoon: "오후 (12:00~18:00)",
   evening: "저녁 (18:00~21:00)",
   anytime: "상관없음"
 };
 
-const DESIRED_COVERAGE_LABELS = {
-  life: "생명보험",
-  nonlife: "손해보험",
-  third: "제3보험"
-};
-
-const EXISTING_INSURANCE_LABELS = {
-  life: "생명보험",
-  nonlife: "손해보험",
-  third: "제3보험",
-  unknown: "잘 모르겠다"
+const INSURANCE_STATE_LABELS = {
+  satisfied: "만족",
+  dissatisfied: "불만족",
+  unknown: "잘모르겠음"
 };
 
 function toDisplayRequest(item) {
-  const existingInsurance = Array.isArray(item.existingInsurance) ? item.existingInsurance : [];
   return {
     ...item,
     name: item.nameEnc ? decryptPII(item.nameEnc) : item.name || "",
@@ -281,16 +290,9 @@ function toDisplayRequest(item) {
       item.availableTime && AVAILABLE_TIME_LABELS[item.availableTime]
         ? AVAILABLE_TIME_LABELS[item.availableTime]
         : "-",
-    desiredCoverageLabel:
-      item.desiredCoverage && DESIRED_COVERAGE_LABELS[item.desiredCoverage]
-        ? DESIRED_COVERAGE_LABELS[item.desiredCoverage]
-        : "-",
-    existingInsuranceLabels:
-      existingInsurance.length > 0
-        ? existingInsurance
-            .map((code) => EXISTING_INSURANCE_LABELS[code])
-            .filter(Boolean)
-            .join(", ")
+    insuranceStateLabel:
+      item.insuranceState && INSURANCE_STATE_LABELS[item.insuranceState]
+        ? INSURANCE_STATE_LABELS[item.insuranceState]
         : "-",
     lastInsuranceCheckLabel:
       item.lastInsuranceCheck && LAST_INSURANCE_CHECK_LABELS[item.lastInsuranceCheck]
@@ -316,35 +318,30 @@ const consultPayloadSchema = z.object({
   region: z.enum(["chungbuk", "chungnam"]),
   ageBand: z.enum(["20", "30", "40", "50", "60"]),
   gender: z.enum(["male", "female"]),
-  monthlyBudget: z.enum(["200", "300", "400", "500", "600", "700", "800", "900", "1000plus"]),
-  availableTime: z.enum(["morning", "afternoon", "evening", "anytime"]),
-  desiredCoverage: z.enum(["life", "nonlife", "third"]),
+  monthlyBudget: z.enum(["under200", "200to300", "300to400", "400to500", "over500"]),
+  availableTime: z.enum([
+    "t09",
+    "t10",
+    "t11",
+    "t12",
+    "t13",
+    "t14",
+    "t15",
+    "t16",
+    "t17",
+    "t18",
+    "t19",
+    "t20",
+    "anytime"
+  ]),
   consultHope: z.enum(["yes", "no"]).default("yes"),
   insuredStatus: z.enum(["yes", "no", "unknown"]).default("unknown"),
-  existingInsurance: z.array(z.enum(["life", "nonlife", "third", "unknown"])).default([]),
+  insuranceState: z.enum(["satisfied", "dissatisfied", "unknown"]).default("unknown"),
   lastInsuranceCheck: z.enum(["within3m", "within6m", "within1y", "over1y", "unknown"]),
   agreePrivacy: z.boolean(),
   agreeThirdParty: z.boolean(),
   agreeContact: z.boolean()
-})
-  .superRefine((data, ctx) => {
-    if (data.insuredStatus === "yes" && data.existingInsurance.length === 0) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["existingInsurance"],
-        message: "기존 보험 선택 필요"
-      });
-    }
-  });
-
-function normalizeExistingInsurance(value) {
-  const rawList = Array.isArray(value) ? value : [value];
-  const normalized = rawList
-    .map((item) => String(item || "").toLowerCase())
-    .filter((item) => ["life", "nonlife", "third", "unknown"].includes(item));
-  const unique = [...new Set(normalized)];
-  return unique.includes("unknown") ? ["unknown"] : unique;
-}
+});
 
 function parseConsultPayload(body) {
   return consultPayloadSchema.safeParse({
@@ -355,10 +352,9 @@ function parseConsultPayload(body) {
     gender: String(body.gender || "").toLowerCase(),
     monthlyBudget: String(body.monthlyBudget || ""),
     availableTime: String(body.availableTime || ""),
-    desiredCoverage: String(body.desiredCoverage || ""),
     consultHope: body.consultHope ? String(body.consultHope || "").toLowerCase() : "yes",
     insuredStatus: body.insuredStatus ? String(body.insuredStatus || "").toLowerCase() : "unknown",
-    existingInsurance: normalizeExistingInsurance(body.existingInsurance),
+    insuranceState: body.insuranceState ? String(body.insuranceState || "").toLowerCase() : "unknown",
     lastInsuranceCheck: String(body.lastInsuranceCheck || ""),
     agreePrivacy: Boolean(body.agreePrivacy),
     agreeThirdParty: Boolean(body.agreeThirdParty),
@@ -404,6 +400,12 @@ const AGE_BAND_LABELS = {
 function sanitizeInsuredStatus(status) {
   const s = String(status || "").toLowerCase();
   if (s === "yes" || s === "no" || s === "unknown") return s;
+  return "unknown";
+}
+
+function sanitizeInsuranceState(value) {
+  const v = String(value || "").toLowerCase();
+  if (v === "satisfied" || v === "dissatisfied" || v === "unknown") return v;
   return "unknown";
 }
 
@@ -464,6 +466,7 @@ async function initDb() {
       agreement_version TEXT NOT NULL DEFAULT 'v1.0',
       consult_hope TEXT NOT NULL,
       insured_status TEXT NOT NULL,
+      insurance_state TEXT NOT NULL DEFAULT 'unknown',
       last_insurance_check TEXT NOT NULL,
       agreements JSONB NOT NULL,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -492,6 +495,10 @@ async function initDb() {
   await dbPool.query(`
     ALTER TABLE consult_requests
     ADD COLUMN IF NOT EXISTS agreement_version TEXT NOT NULL DEFAULT 'v1.0'
+  `);
+  await dbPool.query(`
+    ALTER TABLE consult_requests
+    ADD COLUMN IF NOT EXISTS insurance_state TEXT NOT NULL DEFAULT 'unknown'
   `);
   await dbPool.query(`
     CREATE INDEX IF NOT EXISTS idx_consult_requests_created_at_desc
@@ -563,11 +570,10 @@ async function readConsultRequests({ limit = OPERATOR_PAGE_SIZE, offset = 0 } = 
         gender,
         monthly_budget AS "monthlyBudget",
         available_time AS "availableTime",
-        desired_coverage AS "desiredCoverage",
-        existing_insurance AS "existingInsurance",
         agreement_version AS "agreementVersion",
         consult_hope AS "consultHope",
         insured_status AS "insuredStatus",
+        insurance_state AS "insuranceState",
         last_insurance_check AS "lastInsuranceCheck",
         agreements,
         created_at AS "createdAt"
@@ -621,15 +627,14 @@ async function appendConsultRequest(request) {
         gender,
         monthly_budget,
         available_time,
-        desired_coverage,
-        existing_insurance,
         agreement_version,
         consult_hope,
         insured_status,
+        insurance_state,
         last_insurance_check,
         agreements,
         created_at
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11,$12,$13,$14,$15::jsonb,$16::timestamptz)
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb,$15::timestamptz)
     `,
     [
       request.nameEnc,
@@ -640,11 +645,10 @@ async function appendConsultRequest(request) {
       request.gender,
       request.monthlyBudget,
       request.availableTime,
-      request.desiredCoverage,
-      JSON.stringify(request.existingInsurance || []),
       request.agreementVersion,
       request.consultHope,
       request.insuredStatus,
+      request.insuranceState,
       request.lastInsuranceCheck,
       JSON.stringify(request.agreements),
       request.createdAt
@@ -762,11 +766,10 @@ app.post("/consult", withAsync(async (req, res) => {
     gender: sanitizeGender(payload.gender),
     monthlyBudget: payload.monthlyBudget,
     availableTime: payload.availableTime,
-    desiredCoverage: payload.desiredCoverage,
-    existingInsurance: payload.existingInsurance,
     agreementVersion: AGREEMENT_VERSION,
     consultHope: payload.consultHope,
     insuredStatus: sanitizeInsuredStatus(payload.insuredStatus),
+    insuranceState: sanitizeInsuranceState(payload.insuranceState),
     lastInsuranceCheck: sanitizeLastInsuranceCheck(payload.lastInsuranceCheck),
     agreements: {
       privacy: payload.agreePrivacy,
