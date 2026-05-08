@@ -1,10 +1,10 @@
 const express = require("express");
 const path = require("path");
-const fs = require("fs");
 const crypto = require("crypto");
 const { Pool } = require("pg");
 const session = require("express-session");
 const bcrypt = require("bcryptjs");
+const { z } = require("zod");
 const cookieParser = require("cookie-parser");
 const csurf = require("csurf");
 const helmet = require("helmet");
@@ -21,23 +21,19 @@ const SESSION_SECRET =
   crypto.createHash("sha256").update(`${OPERATOR_PASSWORD}-default-session-secret`).digest("hex");
 const RETENTION_DAYS = Number(process.env.RETENTION_DAYS || 90);
 const DATABASE_URL = process.env.DATABASE_URL || "";
-const dbEnabled = Boolean(DATABASE_URL);
-const dataDir = process.env.DATA_DIR
-  ? path.resolve(process.env.DATA_DIR)
-  : path.join(__dirname, "data");
-const consultFilePath = path.join(dataDir, "consult-requests.json");
 const isProduction = process.env.NODE_ENV === "production";
 const encryptionKeySource = process.env.PII_ENCRYPTION_KEY || "";
 const PII_ENCRYPTION_KEY =
   /^[a-fA-F0-9]{64}$/.test(encryptionKeySource)
     ? Buffer.from(encryptionKeySource, "hex")
     : crypto.createHash("sha256").update(`${OPERATOR_PASSWORD}-fallback-pii-key`).digest();
-const dbPool = dbEnabled
-  ? new Pool({
-      connectionString: DATABASE_URL,
-      ssl: isProduction ? { rejectUnauthorized: false } : false
-    })
-  : null;
+if (!DATABASE_URL) {
+  throw new Error("DATABASE_URL is required. 3단계에서는 JSON fallback을 지원하지 않습니다.");
+}
+const dbPool = new Pool({
+  connectionString: DATABASE_URL,
+  ssl: isProduction ? { rejectUnauthorized: false } : false
+});
 
 app.set("view engine", "ejs");
 app.set("views", path.join(__dirname, "views"));
@@ -92,15 +88,6 @@ const operatorLoginLimiter = rateLimit({
   }
 });
 
-function purgeExpiredRequests(requests) {
-  const retentionMs = RETENTION_DAYS * 24 * 60 * 60 * 1000;
-  const now = Date.now();
-  return requests.filter((item) => {
-    const createdAt = new Date(item.createdAt).getTime();
-    return Number.isFinite(createdAt) && now - createdAt <= retentionMs;
-  });
-}
-
 function encryptPII(value) {
   const iv = crypto.randomBytes(12);
   const cipher = crypto.createCipheriv("aes-256-gcm", PII_ENCRYPTION_KEY, iv);
@@ -136,20 +123,10 @@ const LAST_INSURANCE_CHECK_LABELS = {
   unknown: "기억 안 남"
 };
 
-function sanitizeLastInsuranceCheck(value) {
-  const v = String(value || "");
-  return Object.prototype.hasOwnProperty.call(LAST_INSURANCE_CHECK_LABELS, v) ? v : "";
-}
-
 const REGION_LABELS = {
   chungbuk: "충청북도",
   chungnam: "충청남도"
 };
-
-function sanitizeRegion(region) {
-  const r = String(region || "");
-  return Object.prototype.hasOwnProperty.call(REGION_LABELS, r) ? r : "";
-}
 
 function toDisplayRequest(item) {
   return {
@@ -166,19 +143,72 @@ function toDisplayRequest(item) {
   };
 }
 
-function sanitizeName(name) {
-  const clean = String(name || "").trim();
-  return clean.length >= 2 && clean.length <= 30 ? clean : "";
-}
-
-function sanitizePhone(phone) {
+function normalizePhone(phone) {
   const raw = String(phone || "");
   const digitsRaw = raw.replace(/\D/g, "");
-  const digits =
-    digitsRaw.startsWith("82") && digitsRaw.length >= 11 && digitsRaw.length <= 12
-      ? `0${digitsRaw.slice(2)}`
-      : digitsRaw;
-  return /^01\d{8,9}$/.test(digits) ? digits : "";
+  return digitsRaw.startsWith("82") && digitsRaw.length >= 11 && digitsRaw.length <= 12
+    ? `0${digitsRaw.slice(2)}`
+    : digitsRaw;
+}
+
+const consultPayloadSchema = z.object({
+  name: z.string().trim().min(2).max(30),
+  phone: z
+    .string()
+    .transform((value) => normalizePhone(value))
+    .refine((value) => /^01\d{8,9}$/.test(value), "invalid phone"),
+  region: z.enum(["chungbuk", "chungnam"]),
+  ageBand: z.enum(["20", "30", "40", "50", "60"]),
+  gender: z.enum(["male", "female"]),
+  consultHope: z.enum(["yes", "no"]).default("yes"),
+  insuredStatus: z.enum(["yes", "no", "unknown"]).default("unknown"),
+  lastInsuranceCheck: z.enum(["within3m", "within6m", "within1y", "over1y", "unknown"]),
+  agreePrivacy: z.boolean(),
+  agreeThirdParty: z.boolean(),
+  agreeContact: z.boolean()
+});
+
+function parseConsultPayload(body) {
+  return consultPayloadSchema.safeParse({
+    name: String(body.name || ""),
+    phone: String(body.phone || ""),
+    region: String(body.region || ""),
+    ageBand: String(body.ageBand || ""),
+    gender: String(body.gender || "").toLowerCase(),
+    consultHope: body.consultHope ? String(body.consultHope || "").toLowerCase() : "yes",
+    insuredStatus: body.insuredStatus ? String(body.insuredStatus || "").toLowerCase() : "unknown",
+    lastInsuranceCheck: String(body.lastInsuranceCheck || ""),
+    agreePrivacy: Boolean(body.agreePrivacy),
+    agreeThirdParty: Boolean(body.agreeThirdParty),
+    agreeContact: Boolean(body.agreeContact)
+  });
+}
+
+function formatAgeLabel(item) {
+  if (item.ageBand && AGE_BAND_LABELS[item.ageBand]) {
+    return AGE_BAND_LABELS[item.ageBand];
+  }
+  return "-";
+}
+
+function getClientIp(req) {
+  const forwardedFor = req.headers["x-forwarded-for"];
+  if (typeof forwardedFor === "string" && forwardedFor.length > 0) {
+    return forwardedFor.split(",")[0].trim().slice(0, 100);
+  }
+  return (req.ip || req.socket?.remoteAddress || "").slice(0, 100);
+}
+
+async function writeAuditLog(req, action, result, resourceType, resourceId) {
+  const actorId = req.session?.operatorUsername || null;
+  const userAgent = String(req.headers["user-agent"] || "").slice(0, 255);
+  await dbPool.query(
+    `
+      INSERT INTO audit_logs (actor_id, action, resource_type, resource_id, result, ip, user_agent, created_at)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,NOW())
+    `,
+    [actorId, action, resourceType, resourceId, result, getClientIp(req), userAgent]
+  );
 }
 
 const AGE_BAND_LABELS = {
@@ -189,21 +219,20 @@ const AGE_BAND_LABELS = {
   "60": "60대 이상"
 };
 
+function sanitizeInsuredStatus(status) {
+  const s = String(status || "").toLowerCase();
+  if (s === "yes" || s === "no" || s === "unknown") return s;
+  return "unknown";
+}
+
+function sanitizeLastInsuranceCheck(value) {
+  const v = String(value || "");
+  return Object.prototype.hasOwnProperty.call(LAST_INSURANCE_CHECK_LABELS, v) ? v : "unknown";
+}
+
 function sanitizeAgeBand(ageBand) {
   const b = String(ageBand || "");
   return Object.prototype.hasOwnProperty.call(AGE_BAND_LABELS, b) ? b : "";
-}
-
-function formatAgeLabel(item) {
-  if (item.ageBand === "10") return "10대";
-  if (item.ageBand && AGE_BAND_LABELS[item.ageBand]) {
-    return AGE_BAND_LABELS[item.ageBand];
-  }
-  if (item.age !== undefined && item.age !== null) {
-    const n = Number(item.age);
-    if (Number.isFinite(n)) return `${n}세`;
-  }
-  return "-";
 }
 
 function sanitizeGender(gender) {
@@ -212,23 +241,22 @@ function sanitizeGender(gender) {
   return "";
 }
 
-function sanitizeInsuredStatus(status) {
-  const s = String(status || "").toLowerCase();
-  if (s === "yes" || s === "no" || s === "unknown") return s;
-  return "unknown";
+function sanitizeRegion(region) {
+  const r = String(region || "");
+  return Object.prototype.hasOwnProperty.call(REGION_LABELS, r) ? r : "";
 }
 
-function ensureConsultStorage() {
-  if (!fs.existsSync(dataDir)) {
-    fs.mkdirSync(dataDir, { recursive: true });
-  }
-  if (!fs.existsSync(consultFilePath)) {
-    fs.writeFileSync(consultFilePath, JSON.stringify([], null, 2), "utf-8");
-  }
+function sanitizeName(name) {
+  const clean = String(name || "").trim();
+  return clean.length >= 2 && clean.length <= 30 ? clean : "";
+}
+
+function sanitizePhone(phone) {
+  const digits = normalizePhone(phone);
+  return /^01\d{8,9}$/.test(digits) ? digits : "";
 }
 
 async function initDb() {
-  if (!dbEnabled) return;
   await dbPool.query(`
     CREATE TABLE IF NOT EXISTS consult_requests (
       id BIGSERIAL PRIMARY KEY,
@@ -244,10 +272,22 @@ async function initDb() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `);
+  await dbPool.query(`
+    CREATE TABLE IF NOT EXISTS audit_logs (
+      id BIGSERIAL PRIMARY KEY,
+      actor_id TEXT,
+      action TEXT NOT NULL,
+      resource_type TEXT NOT NULL,
+      resource_id TEXT NOT NULL,
+      result TEXT NOT NULL,
+      ip TEXT NOT NULL,
+      user_agent TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
 }
 
 async function purgeExpiredRequestsDb() {
-  if (!dbEnabled) return;
   await dbPool.query(
     "DELETE FROM consult_requests WHERE created_at < (NOW() - ($1::int * INTERVAL '1 day'))",
     [RETENTION_DAYS]
@@ -255,102 +295,61 @@ async function purgeExpiredRequestsDb() {
 }
 
 async function readConsultRequests() {
-  if (dbEnabled) {
-    await purgeExpiredRequestsDb();
-    const result = await dbPool.query(
-      `
-        SELECT
-          id,
-          name_enc AS "nameEnc",
-          phone_enc AS "phoneEnc",
-          region,
-          age_band AS "ageBand",
-          gender,
-          consult_hope AS "consultHope",
-          insured_status AS "insuredStatus",
-          last_insurance_check AS "lastInsuranceCheck",
-          agreements,
-          created_at AS "createdAt"
-        FROM consult_requests
-        ORDER BY created_at DESC
-      `
-    );
-    return result.rows.map((row) => ({
-      ...row,
-      createdAt: new Date(row.createdAt).toISOString()
-    }));
-  }
-
-  ensureConsultStorage();
-  let requests = JSON.parse(fs.readFileSync(consultFilePath, "utf-8"));
-  const beforeCount = requests.length;
-  let migrated = false;
-
-  requests = requests.map((item) => {
-    const next = { ...item };
-    if (!next.nameEnc && next.name) {
-      next.nameEnc = encryptPII(next.name);
-      delete next.name;
-      migrated = true;
-    }
-    if (!next.phoneEnc && next.phone) {
-      next.phoneEnc = encryptPII(next.phone);
-      delete next.phone;
-      migrated = true;
-    }
-    return next;
-  });
-
-  requests = purgeExpiredRequests(requests);
-  if (beforeCount !== requests.length || migrated) {
-    saveConsultRequests(requests);
-  }
-  return requests;
-}
-
-function saveConsultRequests(requests) {
-  ensureConsultStorage();
-  const safeRequests = purgeExpiredRequests(requests);
-  fs.writeFileSync(consultFilePath, JSON.stringify(safeRequests, null, 2), "utf-8");
+  await purgeExpiredRequestsDb();
+  const result = await dbPool.query(
+    `
+      SELECT
+        id,
+        name_enc AS "nameEnc",
+        phone_enc AS "phoneEnc",
+        region,
+        age_band AS "ageBand",
+        gender,
+        consult_hope AS "consultHope",
+        insured_status AS "insuredStatus",
+        last_insurance_check AS "lastInsuranceCheck",
+        agreements,
+        created_at AS "createdAt"
+      FROM consult_requests
+      ORDER BY created_at DESC
+    `
+  );
+  return result.rows.map((row) => ({
+    ...row,
+    createdAt: new Date(row.createdAt).toISOString()
+  }));
 }
 
 async function appendConsultRequest(request) {
-  if (dbEnabled) {
-    await purgeExpiredRequestsDb();
-    await dbPool.query(
-      `
-        INSERT INTO consult_requests (
-          name_enc,
-          phone_enc,
-          region,
-          age_band,
-          gender,
-          consult_hope,
-          insured_status,
-          last_insurance_check,
-          agreements,
-          created_at
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10::timestamptz)
-      `,
-      [
-        request.nameEnc,
-        request.phoneEnc,
-        request.region,
-        request.ageBand,
-        request.gender,
-        request.consultHope,
-        request.insuredStatus,
-        request.lastInsuranceCheck,
-        JSON.stringify(request.agreements),
-        request.createdAt
-      ]
-    );
-    return;
-  }
-
-  const requests = await readConsultRequests();
-  requests.push(request);
-  saveConsultRequests(requests);
+  await purgeExpiredRequestsDb();
+  await dbPool.query(
+    `
+      INSERT INTO consult_requests (
+        name_enc,
+        phone_enc,
+        region,
+        age_band,
+        gender,
+        consult_hope,
+        insured_status,
+        last_insurance_check,
+        agreements,
+        created_at
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10::timestamptz)
+    `,
+    [
+      request.nameEnc,
+      request.phoneEnc,
+      request.region,
+      request.ageBand,
+      request.gender,
+      request.consultHope,
+      request.insuredStatus,
+      request.lastInsuranceCheck,
+      JSON.stringify(request.agreements),
+      request.createdAt
+    ]
+  );
 }
 
 async function verifyOperatorCredentials(username, password) {
@@ -385,53 +384,38 @@ app.get("/", (req, res) => {
 });
 
 app.post("/consult", async (req, res) => {
-  const {
-    name,
-    phone,
-    region,
-    ageBand,
-    gender,
-    consultHope,
-    insuredStatus,
-    lastInsuranceCheck,
-    agreePrivacy,
-    agreeThirdParty,
-    agreeContact
-  } = req.body;
-
-  const safeName = sanitizeName(name);
-  const safePhone = sanitizePhone(phone);
-  const safeRegion = sanitizeRegion(region);
-  const safeAgeBand = sanitizeAgeBand(ageBand);
-  const safeGender = sanitizeGender(gender);
-  const safeLastInsuranceCheck = sanitizeLastInsuranceCheck(lastInsuranceCheck);
-
-  if (!safeName || !safePhone || !safeRegion || !safeAgeBand || !safeGender || !safeLastInsuranceCheck) {
+  const parsed = parseConsultPayload(req.body);
+  if (!parsed.success) {
+    await writeAuditLog(req, "consult_create", "validation_fail", "consult_request", "new");
     return res.redirect("/?fail=validation#consult");
   }
 
-  const requiredAgreements = agreePrivacy && agreeThirdParty && agreeContact;
+  const payload = parsed.data;
+  const requiredAgreements = payload.agreePrivacy && payload.agreeThirdParty && payload.agreeContact;
   if (!requiredAgreements) {
+    await writeAuditLog(req, "consult_create", "agreement_fail", "consult_request", "new");
     return res.redirect("/?fail=agreement#consult");
   }
 
+  const requestId = String(Date.now());
   await appendConsultRequest({
-    id: Date.now(),
-    nameEnc: encryptPII(safeName),
-    phoneEnc: encryptPII(safePhone),
-    region: safeRegion,
-    ageBand: safeAgeBand,
-    gender: safeGender,
-    consultHope: consultHope || "yes",
-    insuredStatus: sanitizeInsuredStatus(insuredStatus),
-    lastInsuranceCheck: safeLastInsuranceCheck,
+    id: requestId,
+    nameEnc: encryptPII(payload.name),
+    phoneEnc: encryptPII(payload.phone),
+    region: sanitizeRegion(payload.region),
+    ageBand: sanitizeAgeBand(payload.ageBand),
+    gender: sanitizeGender(payload.gender),
+    consultHope: payload.consultHope,
+    insuredStatus: sanitizeInsuredStatus(payload.insuredStatus),
+    lastInsuranceCheck: sanitizeLastInsuranceCheck(payload.lastInsuranceCheck),
     agreements: {
-      privacy: Boolean(agreePrivacy),
-      thirdParty: Boolean(agreeThirdParty),
-      contact: Boolean(agreeContact)
+      privacy: payload.agreePrivacy,
+      thirdParty: payload.agreeThirdParty,
+      contact: payload.agreeContact
     },
     createdAt: new Date().toISOString()
   });
+  await writeAuditLog(req, "consult_create", "success", "consult_request", requestId);
   return res.redirect("/?sent=1#consult");
 });
 
@@ -444,6 +428,7 @@ app.post("/operator/login", operatorLoginLimiter, async (req, res) => {
   const password = String(req.body.password || "");
   const isValid = await verifyOperatorCredentials(username, password);
   if (!isValid) {
+    await writeAuditLog(req, "operator_login", "fail", "operator_auth", username || "unknown");
     return res.status(401).render("operator-login", {
       error: "아이디 또는 비밀번호가 올바르지 않습니다.",
       csrfToken: req.csrfToken()
@@ -452,10 +437,12 @@ app.post("/operator/login", operatorLoginLimiter, async (req, res) => {
 
   req.session.operatorAuthenticated = true;
   req.session.operatorUsername = OPERATOR_USERNAME;
+  await writeAuditLog(req, "operator_login", "success", "operator_auth", OPERATOR_USERNAME);
   return res.redirect("/operator");
 });
 
 app.post("/operator/logout", (req, res) => {
+  const actor = req.session?.operatorUsername || "unknown";
   req.session.destroy(() => {
     res.clearCookie("operator_session", {
       httpOnly: true,
@@ -463,7 +450,9 @@ app.post("/operator/logout", (req, res) => {
       sameSite: "strict",
       path: "/"
     });
-    return res.redirect("/operator/login");
+    writeAuditLog(req, "operator_logout", "success", "operator_auth", actor)
+      .catch(() => null)
+      .finally(() => res.redirect("/operator/login"));
   });
 });
 
@@ -471,6 +460,7 @@ app.get("/operator", requireOperatorAuth, async (req, res) => {
   const requests = (await readConsultRequests())
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
     .map(toDisplayRequest);
+  await writeAuditLog(req, "operator_view", "success", "consult_request", "list");
   res.render("operator", { requests, csrfToken: req.csrfToken() });
 });
 
@@ -488,11 +478,7 @@ initDb()
   .then(() => {
     app.listen(PORT, "0.0.0.0", () => {
       console.log(`보험 DB 사이트 실행 (포트 ${PORT})`);
-      if (dbEnabled) {
-        console.log("상담 저장소: PostgreSQL");
-      } else {
-        console.log("상담 저장소: JSON fallback");
-      }
+      console.log("상담 저장소: PostgreSQL");
       if (!OPERATOR_PASSWORD_HASH && OPERATOR_PASSWORD === "change-operator-password") {
         console.log("운용자 보호를 위해 OPERATOR_PASSWORD 환경변수를 설정하세요.");
       }
