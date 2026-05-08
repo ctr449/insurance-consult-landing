@@ -5,7 +5,7 @@ const { Pool } = require("pg");
 const session = require("express-session");
 const PgStore = require("connect-pg-simple")(session);
 const bcrypt = require("bcryptjs");
-const { authenticator } = require("otplib");
+const speakeasy = require("speakeasy");
 const { z } = require("zod");
 const cookieParser = require("cookie-parser");
 const csurf = require("csurf");
@@ -664,7 +664,12 @@ function verifyOperatorOtp(otp) {
   if (!OPERATOR_TOTP_SECRET) return true;
   const token = String(otp || "").trim();
   if (!/^\d{6}$/.test(token)) return false;
-  return authenticator.check(token, OPERATOR_TOTP_SECRET);
+  return speakeasy.totp.verify({
+    secret: OPERATOR_TOTP_SECRET,
+    encoding: "base32",
+    token,
+    window: 1
+  });
 }
 
 function withAsync(handler) {
