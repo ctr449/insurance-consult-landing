@@ -3,6 +3,8 @@ const path = require("path");
 const fs = require("fs");
 const crypto = require("crypto");
 const { Pool } = require("pg");
+const session = require("express-session");
+const bcrypt = require("bcryptjs");
 const cookieParser = require("cookie-parser");
 const csurf = require("csurf");
 const helmet = require("helmet");
@@ -11,9 +13,12 @@ require("dotenv").config();
 
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
+const OPERATOR_USERNAME = process.env.OPERATOR_USERNAME || "operator";
 const OPERATOR_PASSWORD = process.env.OPERATOR_PASSWORD || "change-operator-password";
-const OPERATOR_COOKIE = "operator_auth";
-const OPERATOR_TOKEN = crypto.createHash("sha256").update(OPERATOR_PASSWORD).digest("hex");
+const OPERATOR_PASSWORD_HASH = process.env.OPERATOR_PASSWORD_HASH || "";
+const SESSION_SECRET =
+  process.env.SESSION_SECRET ||
+  crypto.createHash("sha256").update(`${OPERATOR_PASSWORD}-default-session-secret`).digest("hex");
 const RETENTION_DAYS = Number(process.env.RETENTION_DAYS || 90);
 const DATABASE_URL = process.env.DATABASE_URL || "";
 const dbEnabled = Boolean(DATABASE_URL);
@@ -52,6 +57,20 @@ app.use((req, res, next) => {
 app.use(cookieParser());
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static(path.join(__dirname, "public")));
+app.use(
+  session({
+    name: "operator_session",
+    secret: SESSION_SECRET,
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+      httpOnly: true,
+      secure: isProduction,
+      sameSite: "strict",
+      maxAge: 8 * 60 * 60 * 1000
+    }
+  })
+);
 app.use(
   csurf({
     cookie: {
@@ -334,25 +353,20 @@ async function appendConsultRequest(request) {
   saveConsultRequests(requests);
 }
 
-function parseCookies(cookieHeader = "") {
-  return cookieHeader
-    .split(";")
-    .map((v) => v.trim())
-    .filter(Boolean)
-    .reduce((acc, part) => {
-      const eqIdx = part.indexOf("=");
-      if (eqIdx > -1) {
-        const key = part.slice(0, eqIdx);
-        const value = part.slice(eqIdx + 1);
-        acc[key] = decodeURIComponent(value);
-      }
-      return acc;
-    }, {});
+async function verifyOperatorCredentials(username, password) {
+  if (username !== OPERATOR_USERNAME) return false;
+  if (OPERATOR_PASSWORD_HASH) {
+    return bcrypt.compare(password, OPERATOR_PASSWORD_HASH);
+  }
+  return password === OPERATOR_PASSWORD;
 }
 
 function isOperatorAuthenticated(req) {
-  const cookies = parseCookies(req.headers.cookie);
-  return cookies[OPERATOR_COOKIE] === OPERATOR_TOKEN;
+  return Boolean(
+    req.session &&
+      req.session.operatorAuthenticated === true &&
+      req.session.operatorUsername === OPERATOR_USERNAME
+  );
 }
 
 function requireOperatorAuth(req, res, next) {
@@ -425,33 +439,32 @@ app.get("/operator/login", (req, res) => {
   res.render("operator-login", { error: "", csrfToken: req.csrfToken() });
 });
 
-app.post("/operator/login", operatorLoginLimiter, (req, res) => {
-  const { password } = req.body;
-  if (password !== OPERATOR_PASSWORD) {
+app.post("/operator/login", operatorLoginLimiter, async (req, res) => {
+  const username = String(req.body.username || "").trim();
+  const password = String(req.body.password || "");
+  const isValid = await verifyOperatorCredentials(username, password);
+  if (!isValid) {
     return res.status(401).render("operator-login", {
-      error: "비밀번호가 올바르지 않습니다.",
+      error: "아이디 또는 비밀번호가 올바르지 않습니다.",
       csrfToken: req.csrfToken()
     });
   }
 
-  res.cookie(OPERATOR_COOKIE, OPERATOR_TOKEN, {
-    httpOnly: true,
-    secure: isProduction,
-    sameSite: "strict",
-    path: "/",
-    maxAge: 8 * 60 * 60 * 1000
-  });
+  req.session.operatorAuthenticated = true;
+  req.session.operatorUsername = OPERATOR_USERNAME;
   return res.redirect("/operator");
 });
 
 app.post("/operator/logout", (req, res) => {
-  res.clearCookie(OPERATOR_COOKIE, {
-    httpOnly: true,
-    secure: isProduction,
-    sameSite: "strict",
-    path: "/"
+  req.session.destroy(() => {
+    res.clearCookie("operator_session", {
+      httpOnly: true,
+      secure: isProduction,
+      sameSite: "strict",
+      path: "/"
+    });
+    return res.redirect("/operator/login");
   });
-  res.redirect("/operator/login");
 });
 
 app.get("/operator", requireOperatorAuth, async (req, res) => {
@@ -480,8 +493,11 @@ initDb()
       } else {
         console.log("상담 저장소: JSON fallback");
       }
-      if (OPERATOR_PASSWORD === "change-operator-password") {
+      if (!OPERATOR_PASSWORD_HASH && OPERATOR_PASSWORD === "change-operator-password") {
         console.log("운용자 보호를 위해 OPERATOR_PASSWORD 환경변수를 설정하세요.");
+      }
+      if (!OPERATOR_PASSWORD_HASH) {
+        console.log("권장: OPERATOR_PASSWORD_HASH(bcrypt)와 SESSION_SECRET을 .env에 설정하세요.");
       }
       if (!/^[a-fA-F0-9]{64}$/.test(encryptionKeySource)) {
         console.log("PII_ENCRYPTION_KEY 미설정: 안전한 64자리 hex 키를 .env에 설정하세요.");
