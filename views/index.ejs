@@ -57,7 +57,7 @@
       <p class="error">동의 항목을 모두 체크해야 상담 신청이 가능합니다.</p>
       <% } %>
       <% if (fail === "validation") { %>
-      <p class="error">입력값을 다시 확인해주세요. (이름/연락처/연령대/성별/최근 점검)</p>
+      <p class="error">입력값을 다시 확인해주세요. (이름/연락처/지역/연령대/성별/최근 점검)</p>
       <% } %>
       <% if (fail === "csrf") { %>
       <p class="error">보안 토큰이 만료되었습니다. 다시 제출해주세요.</p>
@@ -79,6 +79,14 @@
             placeholder="01012345678"
             required
           />
+        </div>
+        <div class="field-group field-group--text">
+          <label class="field-label" for="applicant-region">지역</label>
+          <select id="applicant-region" name="region" required>
+            <option value="" selected disabled>지역 선택</option>
+            <option value="chungbuk">충청북도</option>
+            <option value="chungnam">충청남도</option>
+          </select>
         </div>
         <div class="field-group">
           <span class="field-label">상담 희망 여부</span>

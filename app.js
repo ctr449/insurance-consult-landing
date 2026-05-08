@@ -113,12 +113,24 @@ function sanitizeLastInsuranceCheck(value) {
   return Object.prototype.hasOwnProperty.call(LAST_INSURANCE_CHECK_LABELS, v) ? v : "";
 }
 
+const REGION_LABELS = {
+  chungbuk: "충청북도",
+  chungnam: "충청남도"
+};
+
+function sanitizeRegion(region) {
+  const r = String(region || "");
+  return Object.prototype.hasOwnProperty.call(REGION_LABELS, r) ? r : "";
+}
+
 function toDisplayRequest(item) {
   return {
     ...item,
     name: item.nameEnc ? decryptPII(item.nameEnc) : item.name || "",
     phone: item.phoneEnc ? decryptPII(item.phoneEnc) : item.phone || "",
     ageLabel: formatAgeLabel(item),
+    regionLabel:
+      item.region && REGION_LABELS[item.region] ? REGION_LABELS[item.region] : item.regionLabel || "-",
     lastInsuranceCheckLabel:
       item.lastInsuranceCheck && LAST_INSURANCE_CHECK_LABELS[item.lastInsuranceCheck]
         ? LAST_INSURANCE_CHECK_LABELS[item.lastInsuranceCheck]
@@ -261,6 +273,7 @@ app.post("/consult", (req, res) => {
   const {
     name,
     phone,
+    region,
     ageBand,
     gender,
     consultHope,
@@ -273,11 +286,12 @@ app.post("/consult", (req, res) => {
 
   const safeName = sanitizeName(name);
   const safePhone = sanitizePhone(phone);
+  const safeRegion = sanitizeRegion(region);
   const safeAgeBand = sanitizeAgeBand(ageBand);
   const safeGender = sanitizeGender(gender);
   const safeLastInsuranceCheck = sanitizeLastInsuranceCheck(lastInsuranceCheck);
 
-  if (!safeName || !safePhone || !safeAgeBand || !safeGender || !safeLastInsuranceCheck) {
+  if (!safeName || !safePhone || !safeRegion || !safeAgeBand || !safeGender || !safeLastInsuranceCheck) {
     return res.redirect("/?fail=validation#consult");
   }
 
@@ -291,6 +305,7 @@ app.post("/consult", (req, res) => {
     id: Date.now(),
     nameEnc: encryptPII(safeName),
     phoneEnc: encryptPII(safePhone),
+    region: safeRegion,
     ageBand: safeAgeBand,
     gender: safeGender,
     consultHope: consultHope || "yes",

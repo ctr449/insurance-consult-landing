@@ -24,6 +24,7 @@
         <article class="operator-card">
           <p><strong>이름</strong>: <%= item.name %></p>
           <p><strong>연락처</strong>: <%= item.phone %></p>
+          <p><strong>지역</strong>: <%= item.regionLabel || "-" %></p>
           <p><strong>상담 희망 여부</strong>: <%= item.consultHope === "yes" ? "희망" : "미희망" %></p>
           <p>
             <strong>현재 보험 가입 여부</strong>:

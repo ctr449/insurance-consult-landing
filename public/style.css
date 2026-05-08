@@ -42,9 +42,11 @@ form {
   width: 100%;
 }
 
-.field-group--text input {
+.field-group--text input,
+.field-group--text select {
   width: 100%;
   max-width: 100%;
+  background: #fff;
 }
 
 .field-label {
@@ -157,6 +159,7 @@ form {
 }
 
 input,
+select,
 button {
   padding: 8px 10px;
   border: 1px solid #cbd5e1;
