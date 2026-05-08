@@ -3,7 +3,9 @@ const path = require("path");
 const crypto = require("crypto");
 const { Pool } = require("pg");
 const session = require("express-session");
+const PgStore = require("connect-pg-simple")(session);
 const bcrypt = require("bcryptjs");
+const { authenticator } = require("otplib");
 const { z } = require("zod");
 const cookieParser = require("cookie-parser");
 const csurf = require("csurf");
@@ -16,10 +18,14 @@ const PORT = Number(process.env.PORT) || 3000;
 const OPERATOR_USERNAME = process.env.OPERATOR_USERNAME || "operator";
 const OPERATOR_PASSWORD = process.env.OPERATOR_PASSWORD || "change-operator-password";
 const OPERATOR_PASSWORD_HASH = process.env.OPERATOR_PASSWORD_HASH || "";
+const OPERATOR_TOTP_SECRET = String(process.env.OPERATOR_TOTP_SECRET || "").trim();
 const SESSION_SECRET =
   process.env.SESSION_SECRET ||
   crypto.createHash("sha256").update(`${OPERATOR_PASSWORD}-default-session-secret`).digest("hex");
 const RETENTION_DAYS = Number(process.env.RETENTION_DAYS || 90);
+const OPERATOR_PAGE_SIZE = 50;
+const DUPLICATE_LEAD_WINDOW_HOURS = Number(process.env.DUPLICATE_LEAD_WINDOW_HOURS || 24);
+const AGREEMENT_VERSION = process.env.AGREEMENT_VERSION || "v1.0";
 const DATABASE_URL = process.env.DATABASE_URL || "";
 const isProduction = process.env.NODE_ENV === "production";
 const encryptionKeySource = process.env.PII_ENCRYPTION_KEY || "";
@@ -41,7 +47,19 @@ app.set("views", path.join(__dirname, "views"));
 app.set("trust proxy", 1);
 app.use(
   helmet({
-    contentSecurityPolicy: false
+    contentSecurityPolicy: {
+      useDefaults: true,
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'", "'unsafe-inline'"],
+        styleSrc: ["'self'", "'unsafe-inline'"],
+        imgSrc: ["'self'", "data:"],
+        connectSrc: ["'self'"],
+        objectSrc: ["'none'"],
+        baseUri: ["'self'"],
+        frameAncestors: ["'none'"]
+      }
+    }
   })
 );
 app.use((req, res, next) => {
@@ -57,6 +75,11 @@ app.use(
   session({
     name: "operator_session",
     secret: SESSION_SECRET,
+    store: new PgStore({
+      pool: dbPool,
+      tableName: "user_sessions",
+      createTableIfMissing: true
+    }),
     resave: false,
     saveUninitialized: false,
     cookie: {
@@ -334,12 +357,17 @@ function sanitizePhone(phone) {
   return /^01\d{8,9}$/.test(digits) ? digits : "";
 }
 
+function hashPhone(phone) {
+  return crypto.createHash("sha256").update(phone).digest("hex");
+}
+
 async function initDb() {
   await dbPool.query(`
     CREATE TABLE IF NOT EXISTS consult_requests (
       id BIGSERIAL PRIMARY KEY,
       name_enc TEXT NOT NULL,
       phone_enc TEXT NOT NULL,
+      phone_hash TEXT NOT NULL DEFAULT '',
       region TEXT NOT NULL,
       age_band TEXT NOT NULL,
       gender TEXT NOT NULL,
@@ -347,12 +375,17 @@ async function initDb() {
       available_time TEXT NOT NULL DEFAULT 'anytime',
       desired_coverage TEXT NOT NULL DEFAULT 'life',
       existing_insurance JSONB NOT NULL DEFAULT '[]'::jsonb,
+      agreement_version TEXT NOT NULL DEFAULT 'v1.0',
       consult_hope TEXT NOT NULL,
       insured_status TEXT NOT NULL,
       last_insurance_check TEXT NOT NULL,
       agreements JSONB NOT NULL,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
+  `);
+  await dbPool.query(`
+    ALTER TABLE consult_requests
+    ADD COLUMN IF NOT EXISTS phone_hash TEXT NOT NULL DEFAULT ''
   `);
   await dbPool.query(`
     ALTER TABLE consult_requests
@@ -369,6 +402,18 @@ async function initDb() {
   await dbPool.query(`
     ALTER TABLE consult_requests
     ADD COLUMN IF NOT EXISTS existing_insurance JSONB NOT NULL DEFAULT '[]'::jsonb
+  `);
+  await dbPool.query(`
+    ALTER TABLE consult_requests
+    ADD COLUMN IF NOT EXISTS agreement_version TEXT NOT NULL DEFAULT 'v1.0'
+  `);
+  await dbPool.query(`
+    CREATE INDEX IF NOT EXISTS idx_consult_requests_created_at_desc
+    ON consult_requests (created_at DESC)
+  `);
+  await dbPool.query(`
+    CREATE INDEX IF NOT EXISTS idx_consult_requests_phone_hash_created_at
+    ON consult_requests (phone_hash, created_at DESC)
   `);
   await dbPool.query(`
     CREATE TABLE IF NOT EXISTS audit_logs (
@@ -392,8 +437,10 @@ async function purgeExpiredRequestsDb() {
   );
 }
 
-async function readConsultRequests() {
+async function readConsultRequests({ limit = OPERATOR_PAGE_SIZE, offset = 0 } = {}) {
   await purgeExpiredRequestsDb();
+  const safeLimit = Number.isFinite(limit) ? Math.max(1, Math.min(200, Number(limit))) : OPERATOR_PAGE_SIZE;
+  const safeOffset = Number.isFinite(offset) ? Math.max(0, Number(offset)) : 0;
   const result = await dbPool.query(
     `
       SELECT
@@ -407,6 +454,7 @@ async function readConsultRequests() {
         available_time AS "availableTime",
         desired_coverage AS "desiredCoverage",
         existing_insurance AS "existingInsurance",
+        agreement_version AS "agreementVersion",
         consult_hope AS "consultHope",
         insured_status AS "insuredStatus",
         last_insurance_check AS "lastInsuranceCheck",
@@ -414,21 +462,98 @@ async function readConsultRequests() {
         created_at AS "createdAt"
       FROM consult_requests
       ORDER BY created_at DESC
+      LIMIT $1
+      OFFSET $2
     `
+    ,
+    [safeLimit, safeOffset]
   );
+  // #region agent log
+  fetch("http://127.0.0.1:7561/ingest/5c01f500-4c66-473d-982d-543e2111d81d", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "bdbd90" },
+    body: JSON.stringify({
+      sessionId: "bdbd90",
+      runId: "run-consult-list",
+      hypothesisId: "H3",
+      location: "app.js:readConsultRequests result",
+      message: "latest row selected fields",
+      data: {
+        rowCount: result.rows.length,
+        latestHasMonthlyBudget:
+          result.rows.length > 0 ? Boolean(result.rows[0].monthlyBudget) : false,
+        latestHasAvailableTime:
+          result.rows.length > 0 ? Boolean(result.rows[0].availableTime) : false,
+        latestHasDesiredCoverage:
+          result.rows.length > 0 ? Boolean(result.rows[0].desiredCoverage) : false,
+        latestExistingInsuranceType:
+          result.rows.length > 0
+            ? Array.isArray(result.rows[0].existingInsurance)
+              ? "array"
+              : typeof result.rows[0].existingInsurance
+            : "none"
+      },
+      timestamp: Date.now()
+    })
+  }).catch(() => {});
+  // #endregion
   return result.rows.map((row) => ({
     ...row,
     createdAt: new Date(row.createdAt).toISOString()
   }));
 }
 
+async function readConsultRequestCount() {
+  const result = await dbPool.query("SELECT COUNT(*)::int AS total FROM consult_requests");
+  return result.rows[0]?.total || 0;
+}
+
+async function hasRecentDuplicateLead(phoneHash, windowHours = DUPLICATE_LEAD_WINDOW_HOURS) {
+  const safeWindowHours = Number.isFinite(windowHours) ? Math.max(1, Math.min(72, Number(windowHours))) : 24;
+  const result = await dbPool.query(
+    `
+      SELECT 1
+      FROM consult_requests
+      WHERE phone_hash = $1
+        AND created_at >= NOW() - ($2::int * INTERVAL '1 hour')
+      LIMIT 1
+    `,
+    [phoneHash, safeWindowHours]
+  );
+  return result.rows.length > 0;
+}
+
 async function appendConsultRequest(request) {
   await purgeExpiredRequestsDb();
-  await dbPool.query(
-    `
+  // #region agent log
+  fetch("http://127.0.0.1:7561/ingest/5c01f500-4c66-473d-982d-543e2111d81d", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "bdbd90" },
+    body: JSON.stringify({
+      sessionId: "bdbd90",
+      runId: "run-consult-list",
+      hypothesisId: "H2",
+      location: "app.js:appendConsultRequest before insert",
+      message: "insert payload field presence",
+      data: {
+        hasMonthlyBudget: Boolean(request.monthlyBudget),
+        hasAvailableTime: Boolean(request.availableTime),
+        hasDesiredCoverage: Boolean(request.desiredCoverage),
+        existingInsuranceCount: Array.isArray(request.existingInsurance)
+          ? request.existingInsurance.length
+          : -1
+      },
+      timestamp: Date.now()
+    })
+  }).catch(() => {});
+  // #endregion
+  try {
+    await dbPool.query(
+      `
       INSERT INTO consult_requests (
         name_enc,
         phone_enc,
+        phone_hash,
         region,
         age_band,
         gender,
@@ -436,16 +561,18 @@ async function appendConsultRequest(request) {
         available_time,
         desired_coverage,
         existing_insurance,
+        agreement_version,
         consult_hope,
         insured_status,
         last_insurance_check,
         agreements,
         created_at
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11,$12,$13::jsonb,$14::timestamptz)
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11,$12,$13,$14,$15::jsonb,$16::timestamptz)
     `,
     [
       request.nameEnc,
       request.phoneEnc,
+      request.phoneHash,
       request.region,
       request.ageBand,
       request.gender,
@@ -453,13 +580,47 @@ async function appendConsultRequest(request) {
       request.availableTime,
       request.desiredCoverage,
       JSON.stringify(request.existingInsurance || []),
+      request.agreementVersion,
       request.consultHope,
       request.insuredStatus,
       request.lastInsuranceCheck,
       JSON.stringify(request.agreements),
       request.createdAt
-    ]
-  );
+      ]
+    );
+    // #region agent log
+    fetch("http://127.0.0.1:7561/ingest/5c01f500-4c66-473d-982d-543e2111d81d", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "bdbd90" },
+      body: JSON.stringify({
+        sessionId: "bdbd90",
+        runId: "run-consult-list",
+        hypothesisId: "H2",
+        location: "app.js:appendConsultRequest after insert",
+        message: "insert query success",
+        data: { inserted: true },
+        timestamp: Date.now()
+      })
+    }).catch(() => {});
+    // #endregion
+  } catch (error) {
+    // #region agent log
+    fetch("http://127.0.0.1:7561/ingest/5c01f500-4c66-473d-982d-543e2111d81d", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "bdbd90" },
+      body: JSON.stringify({
+        sessionId: "bdbd90",
+        runId: "run-consult-list",
+        hypothesisId: "H4",
+        location: "app.js:appendConsultRequest insert error",
+        message: "insert query failed",
+        data: { code: error && error.code ? String(error.code) : "unknown" },
+        timestamp: Date.now()
+      })
+    }).catch(() => {});
+    // #endregion
+    throw error;
+  }
 }
 
 async function verifyOperatorCredentials(username, password) {
@@ -468,6 +629,13 @@ async function verifyOperatorCredentials(username, password) {
     return bcrypt.compare(password, OPERATOR_PASSWORD_HASH);
   }
   return password === OPERATOR_PASSWORD;
+}
+
+function verifyOperatorOtp(otp) {
+  if (!OPERATOR_TOTP_SECRET) return true;
+  const token = String(otp || "").trim();
+  if (!/^\d{6}$/.test(token)) return false;
+  return authenticator.check(token, OPERATOR_TOTP_SECRET);
 }
 
 function isOperatorAuthenticated(req) {
@@ -495,6 +663,27 @@ app.get("/", (req, res) => {
 
 app.post("/consult", async (req, res) => {
   const parsed = parseConsultPayload(req.body);
+  // #region agent log
+  fetch("http://127.0.0.1:7561/ingest/5c01f500-4c66-473d-982d-543e2111d81d", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "bdbd90" },
+    body: JSON.stringify({
+      sessionId: "bdbd90",
+      runId: "run-consult-list",
+      hypothesisId: "H1",
+      location: "app.js:/consult parsed",
+      message: "consult payload parse result",
+      data: {
+        success: parsed.success,
+        hasMonthlyBudget: parsed.success ? Boolean(parsed.data.monthlyBudget) : false,
+        hasAvailableTime: parsed.success ? Boolean(parsed.data.availableTime) : false,
+        hasDesiredCoverage: parsed.success ? Boolean(parsed.data.desiredCoverage) : false,
+        existingInsuranceCount: parsed.success ? parsed.data.existingInsurance.length : -1
+      },
+      timestamp: Date.now()
+    })
+  }).catch(() => {});
+  // #endregion
   if (!parsed.success) {
     await writeAuditLog(req, "consult_create", "validation_fail", "consult_request", "new");
     return res.redirect("/?fail=validation#consult");
@@ -507,11 +696,19 @@ app.post("/consult", async (req, res) => {
     return res.redirect("/?fail=agreement#consult");
   }
 
+  const safePhone = sanitizePhone(payload.phone);
+  const phoneHash = hashPhone(safePhone);
+  if (await hasRecentDuplicateLead(phoneHash)) {
+    await writeAuditLog(req, "consult_create", "duplicate_blocked", "consult_request", phoneHash.slice(0, 12));
+    return res.redirect("/?fail=duplicate#consult");
+  }
+
   const requestId = String(Date.now());
   await appendConsultRequest({
     id: requestId,
     nameEnc: encryptPII(payload.name),
-    phoneEnc: encryptPII(payload.phone),
+    phoneEnc: encryptPII(safePhone),
+    phoneHash,
     region: sanitizeRegion(payload.region),
     ageBand: sanitizeAgeBand(payload.ageBand),
     gender: sanitizeGender(payload.gender),
@@ -519,6 +716,7 @@ app.post("/consult", async (req, res) => {
     availableTime: payload.availableTime,
     desiredCoverage: payload.desiredCoverage,
     existingInsurance: payload.existingInsurance,
+    agreementVersion: AGREEMENT_VERSION,
     consultHope: payload.consultHope,
     insuredStatus: sanitizeInsuredStatus(payload.insuredStatus),
     lastInsuranceCheck: sanitizeLastInsuranceCheck(payload.lastInsuranceCheck),
@@ -540,19 +738,32 @@ app.get("/operator/login", (req, res) => {
 app.post("/operator/login", operatorLoginLimiter, async (req, res) => {
   const username = String(req.body.username || "").trim();
   const password = String(req.body.password || "");
+  const otp = String(req.body.otp || "");
   const isValid = await verifyOperatorCredentials(username, password);
-  if (!isValid) {
+  const otpValid = verifyOperatorOtp(otp);
+  if (!isValid || !otpValid) {
     await writeAuditLog(req, "operator_login", "fail", "operator_auth", username || "unknown");
     return res.status(401).render("operator-login", {
-      error: "아이디 또는 비밀번호가 올바르지 않습니다.",
+      error: OPERATOR_TOTP_SECRET
+        ? "아이디, 비밀번호 또는 인증코드를 확인해주세요."
+        : "아이디 또는 비밀번호가 올바르지 않습니다.",
       csrfToken: req.csrfToken()
     });
   }
 
-  req.session.operatorAuthenticated = true;
-  req.session.operatorUsername = OPERATOR_USERNAME;
-  await writeAuditLog(req, "operator_login", "success", "operator_auth", OPERATOR_USERNAME);
-  return res.redirect("/operator");
+  return req.session.regenerate((err) => {
+    if (err) {
+      return res.status(500).render("operator-login", {
+        error: "로그인 처리 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.",
+        csrfToken: req.csrfToken()
+      });
+    }
+    req.session.operatorAuthenticated = true;
+    req.session.operatorUsername = OPERATOR_USERNAME;
+    writeAuditLog(req, "operator_login", "success", "operator_auth", OPERATOR_USERNAME)
+      .catch(() => null)
+      .finally(() => res.redirect("/operator"));
+  });
 });
 
 app.post("/operator/logout", (req, res) => {
@@ -571,11 +782,30 @@ app.post("/operator/logout", (req, res) => {
 });
 
 app.get("/operator", requireOperatorAuth, async (req, res) => {
-  const requests = (await readConsultRequests())
-    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-    .map(toDisplayRequest);
+  const pageRaw = Number.parseInt(String(req.query.page || "1"), 10);
+  const page = Number.isFinite(pageRaw) && pageRaw > 0 ? pageRaw : 1;
+  const offset = (page - 1) * OPERATOR_PAGE_SIZE;
+  const [totalCount, rows] = await Promise.all([
+    readConsultRequestCount(),
+    readConsultRequests({ limit: OPERATOR_PAGE_SIZE, offset })
+  ]);
+  const requests = rows.map(toDisplayRequest);
+  const totalPages = Math.max(1, Math.ceil(totalCount / OPERATOR_PAGE_SIZE));
+  const hasPrev = page > 1;
+  const hasNext = page < totalPages;
   await writeAuditLog(req, "operator_view", "success", "consult_request", "list");
-  res.render("operator", { requests, csrfToken: req.csrfToken() });
+  res.render("operator", {
+    requests,
+    csrfToken: req.csrfToken(),
+    pagination: {
+      page,
+      pageSize: OPERATOR_PAGE_SIZE,
+      totalCount,
+      totalPages,
+      hasPrev,
+      hasNext
+    }
+  });
 });
 
 app.use((err, req, res, next) => {

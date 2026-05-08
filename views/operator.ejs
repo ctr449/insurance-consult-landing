@@ -46,11 +46,27 @@
             제3자제공(<%= item.agreements?.thirdParty ? "Y" : "N" %>) /
             상담연결(<%= item.agreements?.contact ? "Y" : "N" %>)
           </p>
+          <p><strong>동의 문구 버전</strong>: <%= item.agreementVersion || "-" %></p>
           <p><strong>접수시각</strong>: <%= new Date(item.createdAt).toLocaleString("ko-KR") %></p>
         </article>
         <% }) %>
       </div>
       <% } %>
+      <div class="topbar">
+        <p>
+          페이지 <strong><%= pagination.page %></strong> / <%= pagination.totalPages %>
+          (총 <%= pagination.totalCount %>건)
+        </p>
+        <div>
+          <% if (pagination.hasPrev) { %>
+          <a href="/operator?page=<%= pagination.page - 1 %>">이전</a>
+          <% } %>
+          <% if (pagination.hasPrev && pagination.hasNext) { %> | <% } %>
+          <% if (pagination.hasNext) { %>
+          <a href="/operator?page=<%= pagination.page + 1 %>">다음</a>
+          <% } %>
+        </div>
+      </div>
     </section>
   </body>
 </html>
