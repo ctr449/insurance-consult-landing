@@ -2,6 +2,7 @@ const express = require("express");
 const path = require("path");
 const fs = require("fs");
 const crypto = require("crypto");
+const { Pool } = require("pg");
 const cookieParser = require("cookie-parser");
 const csurf = require("csurf");
 const helmet = require("helmet");
@@ -14,6 +15,8 @@ const OPERATOR_PASSWORD = process.env.OPERATOR_PASSWORD || "change-operator-pass
 const OPERATOR_COOKIE = "operator_auth";
 const OPERATOR_TOKEN = crypto.createHash("sha256").update(OPERATOR_PASSWORD).digest("hex");
 const RETENTION_DAYS = Number(process.env.RETENTION_DAYS || 90);
+const DATABASE_URL = process.env.DATABASE_URL || "";
+const dbEnabled = Boolean(DATABASE_URL);
 const dataDir = process.env.DATA_DIR
   ? path.resolve(process.env.DATA_DIR)
   : path.join(__dirname, "data");
@@ -24,6 +27,12 @@ const PII_ENCRYPTION_KEY =
   /^[a-fA-F0-9]{64}$/.test(encryptionKeySource)
     ? Buffer.from(encryptionKeySource, "hex")
     : crypto.createHash("sha256").update(`${OPERATOR_PASSWORD}-fallback-pii-key`).digest();
+const dbPool = dbEnabled
+  ? new Pool({
+      connectionString: DATABASE_URL,
+      ssl: isProduction ? { rejectUnauthorized: false } : false
+    })
+  : null;
 
 app.set("view engine", "ejs");
 app.set("views", path.join(__dirname, "views"));
@@ -199,7 +208,60 @@ function ensureConsultStorage() {
   }
 }
 
-function readConsultRequests() {
+async function initDb() {
+  if (!dbEnabled) return;
+  await dbPool.query(`
+    CREATE TABLE IF NOT EXISTS consult_requests (
+      id BIGSERIAL PRIMARY KEY,
+      name_enc TEXT NOT NULL,
+      phone_enc TEXT NOT NULL,
+      region TEXT NOT NULL,
+      age_band TEXT NOT NULL,
+      gender TEXT NOT NULL,
+      consult_hope TEXT NOT NULL,
+      insured_status TEXT NOT NULL,
+      last_insurance_check TEXT NOT NULL,
+      agreements JSONB NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+}
+
+async function purgeExpiredRequestsDb() {
+  if (!dbEnabled) return;
+  await dbPool.query(
+    "DELETE FROM consult_requests WHERE created_at < (NOW() - ($1::int * INTERVAL '1 day'))",
+    [RETENTION_DAYS]
+  );
+}
+
+async function readConsultRequests() {
+  if (dbEnabled) {
+    await purgeExpiredRequestsDb();
+    const result = await dbPool.query(
+      `
+        SELECT
+          id,
+          name_enc AS "nameEnc",
+          phone_enc AS "phoneEnc",
+          region,
+          age_band AS "ageBand",
+          gender,
+          consult_hope AS "consultHope",
+          insured_status AS "insuredStatus",
+          last_insurance_check AS "lastInsuranceCheck",
+          agreements,
+          created_at AS "createdAt"
+        FROM consult_requests
+        ORDER BY created_at DESC
+      `
+    );
+    return result.rows.map((row) => ({
+      ...row,
+      createdAt: new Date(row.createdAt).toISOString()
+    }));
+  }
+
   ensureConsultStorage();
   let requests = JSON.parse(fs.readFileSync(consultFilePath, "utf-8"));
   const beforeCount = requests.length;
@@ -231,6 +293,45 @@ function saveConsultRequests(requests) {
   ensureConsultStorage();
   const safeRequests = purgeExpiredRequests(requests);
   fs.writeFileSync(consultFilePath, JSON.stringify(safeRequests, null, 2), "utf-8");
+}
+
+async function appendConsultRequest(request) {
+  if (dbEnabled) {
+    await purgeExpiredRequestsDb();
+    await dbPool.query(
+      `
+        INSERT INTO consult_requests (
+          name_enc,
+          phone_enc,
+          region,
+          age_band,
+          gender,
+          consult_hope,
+          insured_status,
+          last_insurance_check,
+          agreements,
+          created_at
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10::timestamptz)
+      `,
+      [
+        request.nameEnc,
+        request.phoneEnc,
+        request.region,
+        request.ageBand,
+        request.gender,
+        request.consultHope,
+        request.insuredStatus,
+        request.lastInsuranceCheck,
+        JSON.stringify(request.agreements),
+        request.createdAt
+      ]
+    );
+    return;
+  }
+
+  const requests = await readConsultRequests();
+  requests.push(request);
+  saveConsultRequests(requests);
 }
 
 function parseCookies(cookieHeader = "") {
@@ -269,7 +370,7 @@ app.get("/", (req, res) => {
   });
 });
 
-app.post("/consult", (req, res) => {
+app.post("/consult", async (req, res) => {
   const {
     name,
     phone,
@@ -300,8 +401,7 @@ app.post("/consult", (req, res) => {
     return res.redirect("/?fail=agreement#consult");
   }
 
-  const requests = readConsultRequests();
-  requests.push({
+  await appendConsultRequest({
     id: Date.now(),
     nameEnc: encryptPII(safeName),
     phoneEnc: encryptPII(safePhone),
@@ -318,7 +418,6 @@ app.post("/consult", (req, res) => {
     },
     createdAt: new Date().toISOString()
   });
-  saveConsultRequests(requests);
   return res.redirect("/?sent=1#consult");
 });
 
@@ -355,8 +454,8 @@ app.post("/operator/logout", (req, res) => {
   res.redirect("/operator/login");
 });
 
-app.get("/operator", requireOperatorAuth, (req, res) => {
-  const requests = readConsultRequests()
+app.get("/operator", requireOperatorAuth, async (req, res) => {
+  const requests = (await readConsultRequests())
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
     .map(toDisplayRequest);
   res.render("operator", { requests, csrfToken: req.csrfToken() });
@@ -372,12 +471,24 @@ app.use((err, req, res, next) => {
   return next(err);
 });
 
-app.listen(PORT, "0.0.0.0", () => {
-  console.log(`보험 DB 사이트 실행 (포트 ${PORT})`);
-  if (OPERATOR_PASSWORD === "change-operator-password") {
-    console.log("운용자 보호를 위해 OPERATOR_PASSWORD 환경변수를 설정하세요.");
-  }
-  if (!/^[a-fA-F0-9]{64}$/.test(encryptionKeySource)) {
-    console.log("PII_ENCRYPTION_KEY 미설정: 안전한 64자리 hex 키를 .env에 설정하세요.");
-  }
-});
+initDb()
+  .then(() => {
+    app.listen(PORT, "0.0.0.0", () => {
+      console.log(`보험 DB 사이트 실행 (포트 ${PORT})`);
+      if (dbEnabled) {
+        console.log("상담 저장소: PostgreSQL");
+      } else {
+        console.log("상담 저장소: JSON fallback");
+      }
+      if (OPERATOR_PASSWORD === "change-operator-password") {
+        console.log("운용자 보호를 위해 OPERATOR_PASSWORD 환경변수를 설정하세요.");
+      }
+      if (!/^[a-fA-F0-9]{64}$/.test(encryptionKeySource)) {
+        console.log("PII_ENCRYPTION_KEY 미설정: 안전한 64자리 hex 키를 .env에 설정하세요.");
+      }
+    });
+  })
+  .catch((err) => {
+    console.error("DB 초기화 실패:", err);
+    process.exit(1);
+  });
