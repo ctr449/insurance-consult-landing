@@ -13,10 +13,25 @@ const helmet = require("helmet");
 const rateLimit = require("express-rate-limit");
 require("dotenv").config();
 
+function normalizeOperatorPasswordHash(raw) {
+  let s = String(raw ?? "").trim();
+  if (
+    (s.startsWith('"') && s.endsWith('"')) ||
+    (s.startsWith("'") && s.endsWith("'"))
+  ) {
+    s = s.slice(1, -1).trim();
+  }
+  return s;
+}
+
+function isLikelyBcryptHash(s) {
+  return /^\$2[aby]\$\d{2}\$/.test(String(s || ""));
+}
+
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
 const OPERATOR_USERNAME = process.env.OPERATOR_USERNAME || "operator";
-const OPERATOR_PASSWORD_HASH = String(process.env.OPERATOR_PASSWORD_HASH || "").trim();
+const OPERATOR_PASSWORD_HASH = normalizeOperatorPasswordHash(process.env.OPERATOR_PASSWORD_HASH || "");
 const OPERATOR_TOTP_SECRET = String(process.env.OPERATOR_TOTP_SECRET || "").trim();
 const OPERATOR_TOTP_ENABLED = OPERATOR_TOTP_SECRET.length > 0;
 const SESSION_SECRET = String(process.env.SESSION_SECRET || "").trim();
@@ -41,6 +56,11 @@ if (!SESSION_SECRET) {
 }
 if (!OPERATOR_PASSWORD_HASH) {
   throw new Error("OPERATOR_PASSWORD_HASH is required.");
+}
+if (!isLikelyBcryptHash(OPERATOR_PASSWORD_HASH)) {
+  console.warn(
+    "[operator] OPERATOR_PASSWORD_HASH가 bcrypt 형식($2a$/$2b$…)으로 보이지 않습니다. Railway 값에 따옴표·줄바꿈·잘림이 없는지 확인하세요."
+  );
 }
 if (isProduction) {
   const requiredEnvKeys = [
@@ -704,7 +724,7 @@ async function getOperatorLoginFailureReason(username, password, otp) {
   if (String(username || "").trim() !== OPERATOR_USERNAME) return "username";
   let passwordOk = false;
   try {
-    passwordOk = await bcrypt.compare(String(password || ""), OPERATOR_PASSWORD_HASH);
+    passwordOk = await bcrypt.compare(String(password || "").trim(), OPERATOR_PASSWORD_HASH);
   } catch {
     passwordOk = false;
   }

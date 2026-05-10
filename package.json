@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node app.js",
     "backup:db": "bash scripts/backup-db.sh",
-    "restore:db": "bash scripts/restore-db.sh"
+    "restore:db": "bash scripts/restore-db.sh",
+    "verify:operator": "node scripts/verify-operator-hash.js"
   },
   "keywords": [
     "insurance",
