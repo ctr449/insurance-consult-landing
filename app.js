@@ -18,6 +18,7 @@ const PORT = Number(process.env.PORT) || 3000;
 const OPERATOR_USERNAME = process.env.OPERATOR_USERNAME || "operator";
 const OPERATOR_PASSWORD_HASH = String(process.env.OPERATOR_PASSWORD_HASH || "").trim();
 const OPERATOR_TOTP_SECRET = String(process.env.OPERATOR_TOTP_SECRET || "").trim();
+const OPERATOR_TOTP_ENABLED = OPERATOR_TOTP_SECRET.length > 0;
 const SESSION_SECRET = String(process.env.SESSION_SECRET || "").trim();
 const RETENTION_DAYS = Number(process.env.RETENTION_DAYS || 90);
 const OPERATOR_PAGE_SIZE = 50;
@@ -822,7 +823,11 @@ app.post("/consult", withAsync(async (req, res) => {
 }));
 
 app.get("/operator/login", (req, res) => {
-  res.render("operator-login", { error: "", csrfToken: req.csrfToken() });
+  res.render("operator-login", {
+    error: "",
+    csrfToken: req.csrfToken(),
+    totpRequired: OPERATOR_TOTP_ENABLED
+  });
 });
 
 app.post("/operator/login", operatorLoginLimiter, withAsync(async (req, res) => {
@@ -837,7 +842,8 @@ app.post("/operator/login", operatorLoginLimiter, withAsync(async (req, res) => 
       error: OPERATOR_TOTP_SECRET
         ? "아이디, 비밀번호 또는 인증코드를 확인해주세요."
         : "아이디 또는 비밀번호가 올바르지 않습니다.",
-      csrfToken: req.csrfToken()
+      csrfToken: req.csrfToken(),
+      totpRequired: OPERATOR_TOTP_ENABLED
     });
   }
 
@@ -845,7 +851,8 @@ app.post("/operator/login", operatorLoginLimiter, withAsync(async (req, res) => 
     if (err) {
       return res.status(500).render("operator-login", {
         error: "로그인 처리 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.",
-        csrfToken: req.csrfToken()
+        csrfToken: req.csrfToken(),
+        totpRequired: OPERATOR_TOTP_ENABLED
       });
     }
     req.session.operatorAuthenticated = true;
@@ -945,7 +952,8 @@ app.use((err, req, res, next) => {
     if (req.path.startsWith("/operator")) {
       return res.status(503).render("operator-login", {
         error: "DB 연결이 불안정합니다. 잠시 후 다시 시도해주세요.",
-        csrfToken: req.csrfToken ? req.csrfToken() : ""
+        csrfToken: req.csrfToken ? req.csrfToken() : "",
+        totpRequired: OPERATOR_TOTP_ENABLED
       });
     }
     return res.redirect("/?fail=db#consult");
@@ -953,7 +961,8 @@ app.use((err, req, res, next) => {
   if (req.path.startsWith("/operator")) {
     return res.status(500).render("operator-login", {
       error: "일시적인 서버 오류가 발생했습니다. 잠시 후 다시 시도해주세요.",
-      csrfToken: req.csrfToken ? req.csrfToken() : ""
+      csrfToken: req.csrfToken ? req.csrfToken() : "",
+      totpRequired: OPERATOR_TOTP_ENABLED
     });
   }
   return res.redirect("/?fail=server#consult");

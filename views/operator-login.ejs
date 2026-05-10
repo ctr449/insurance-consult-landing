@@ -17,7 +17,15 @@
         <input type="hidden" name="_csrf" value="<%= csrfToken %>" />
         <input type="text" name="username" placeholder="운용자 아이디" required />
         <input type="password" name="password" placeholder="운용자 비밀번호" required />
-        <input type="text" name="otp" inputmode="numeric" pattern="[0-9]{6}" placeholder="인증앱 6자리 코드" />
+        <input
+          type="text"
+          name="otp"
+          inputmode="numeric"
+          pattern="[0-9]{6}"
+          maxlength="6"
+          placeholder="<%= totpRequired ? '인증앱 6자리 (필수)' : '인증앱 6자리 (선택)' %>"
+          <%= totpRequired ? 'required autocomplete="one-time-code"' : '' %>
+        />
         <button type="submit">로그인</button>
       </form>
       <p class="operator-link"><a href="/">랜딩으로 돌아가기</a></p>
