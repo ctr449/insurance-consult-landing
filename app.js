@@ -699,9 +699,18 @@ async function appendConsultRequest(request) {
   }
 }
 
-async function verifyOperatorCredentials(username, password) {
-  if (username !== OPERATOR_USERNAME) return false;
-  return bcrypt.compare(password, OPERATOR_PASSWORD_HASH);
+/** @returns {Promise<null | "username" | "password" | "otp">} */
+async function getOperatorLoginFailureReason(username, password, otp) {
+  if (String(username || "").trim() !== OPERATOR_USERNAME) return "username";
+  let passwordOk = false;
+  try {
+    passwordOk = await bcrypt.compare(String(password || ""), OPERATOR_PASSWORD_HASH);
+  } catch {
+    passwordOk = false;
+  }
+  if (!passwordOk) return "password";
+  if (!verifyOperatorOtp(otp)) return "otp";
+  return null;
 }
 
 function verifyOperatorOtp(otp) {
@@ -834,14 +843,22 @@ app.post("/operator/login", operatorLoginLimiter, withAsync(async (req, res) => 
   const username = String(req.body.username || "").trim();
   const password = String(req.body.password || "");
   const otp = String(req.body.otp || "");
-  const isValid = await verifyOperatorCredentials(username, password);
-  const otpValid = verifyOperatorOtp(otp);
-  if (!isValid || !otpValid) {
-    await writeAuditLog(req, "operator_login", "fail", "operator_auth", username || "unknown");
+  const failReason = await getOperatorLoginFailureReason(username, password, otp);
+  if (failReason) {
+    const errorByReason = {
+      username: "아이디를 확인해주세요. (Railway의 OPERATOR_USERNAME과 동일해야 합니다.)",
+      password: "비밀번호를 확인해주세요. (OPERATOR_PASSWORD_HASH는 bcrypt 해시이며, 해시를 만들 때 쓴 비밀번호와 같아야 합니다.)",
+      otp: "인증코드(6자리)를 확인해주세요. (Authenticator에 등록한 키가 Railway의 OPERATOR_TOTP_SECRET과 같은지, 휴대폰 시간이 맞는지 확인하세요.)"
+    };
+    await writeAuditLog(
+      req,
+      "operator_login",
+      `fail_${failReason}`,
+      "operator_auth",
+      username || "unknown"
+    );
     return res.status(401).render("operator-login", {
-      error: OPERATOR_TOTP_SECRET
-        ? "아이디, 비밀번호 또는 인증코드를 확인해주세요."
-        : "아이디 또는 비밀번호가 올바르지 않습니다.",
+      error: errorByReason[failReason],
       csrfToken: req.csrfToken(),
       totpRequired: OPERATOR_TOTP_ENABLED
     });
