@@ -28,7 +28,9 @@ const PURGE_ON_STARTUP = String(process.env.PURGE_ON_STARTUP || "true").toLowerC
 const DB_HEALTHCHECK_TIMEOUT_MS = Number(process.env.DB_HEALTHCHECK_TIMEOUT_MS || 2000);
 const ERROR_ALERT_WEBHOOK_URL = String(process.env.ERROR_ALERT_WEBHOOK_URL || "").trim();
 const ERROR_ALERT_COOLDOWN_SEC = Number(process.env.ERROR_ALERT_COOLDOWN_SEC || 60);
-const DATABASE_URL = process.env.DATABASE_URL || "";
+const DATABASE_URL_PRIVATE = String(process.env.DATABASE_URL || "").trim();
+const DATABASE_PUBLIC_URL = String(process.env.DATABASE_PUBLIC_URL || "").trim();
+const DATABASE_URL = DATABASE_PUBLIC_URL || DATABASE_URL_PRIVATE;
 const isProduction = process.env.NODE_ENV === "production";
 const TRUST_PROXY = process.env.TRUST_PROXY || "1";
 const encryptionKeySource = process.env.PII_ENCRYPTION_KEY || "";
@@ -41,7 +43,6 @@ if (!OPERATOR_PASSWORD_HASH) {
 }
 if (isProduction) {
   const requiredEnvKeys = [
-    "DATABASE_URL",
     "SESSION_SECRET",
     "PII_ENCRYPTION_KEY",
     "OPERATOR_PASSWORD_HASH",
@@ -49,6 +50,9 @@ if (isProduction) {
     "PHONE_HASH_HMAC_KEY"
   ];
   const missingEnvKeys = requiredEnvKeys.filter((key) => !String(process.env[key] || "").trim());
+  if (!DATABASE_URL_PRIVATE && !DATABASE_PUBLIC_URL) {
+    missingEnvKeys.push("DATABASE_URL or DATABASE_PUBLIC_URL");
+  }
   if (missingEnvKeys.length > 0) {
     throw new Error(`Missing required env in production: ${missingEnvKeys.join(", ")}`);
   }
@@ -58,7 +62,9 @@ const PII_ENCRYPTION_KEY =
     ? Buffer.from(encryptionKeySource, "hex")
     : crypto.createHash("sha256").update(`${SESSION_SECRET}-fallback-pii-key`).digest();
 if (!DATABASE_URL) {
-  throw new Error("DATABASE_URL is required. 3단계에서는 JSON fallback을 지원하지 않습니다.");
+  throw new Error(
+    "DATABASE_URL 또는 DATABASE_PUBLIC_URL 이 필요합니다. (Railway는 Public TCP URL을 DATABASE_PUBLIC_URL에 넣을 수 있습니다.)"
+  );
 }
 const dbPool = new Pool({
   connectionString: DATABASE_URL,
