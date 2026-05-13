@@ -43,7 +43,7 @@
             <strong>동의 상태</strong>:
             개인정보(<%= item.agreements?.privacy ? "Y" : "N" %>) /
             제3자제공(<%= item.agreements?.thirdParty ? "Y" : "N" %>) /
-            상담연결(<%= item.agreements?.contact ? "Y" : "N" %>)
+            마케팅(<%= item.agreements?.marketing ? "Y" : "N" %>)
           </p>
           <p><strong>동의 문구 버전</strong>: <%= item.agreementVersion || "-" %></p>
           <p><strong>접수시각</strong>: <%= new Date(item.createdAt).toLocaleString("ko-KR") %></p>

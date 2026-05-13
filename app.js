@@ -400,7 +400,7 @@ const consultPayloadSchema = z.object({
   lastInsuranceCheck: z.enum(["within3m", "within6m", "within1y", "over1y", "unknown"]),
   agreePrivacy: z.boolean(),
   agreeThirdParty: z.boolean(),
-  agreeContact: z.boolean()
+  agreeMarketing: z.boolean()
 });
 
 function parseConsultPayload(body) {
@@ -418,7 +418,7 @@ function parseConsultPayload(body) {
     lastInsuranceCheck: String(body.lastInsuranceCheck || ""),
     agreePrivacy: Boolean(body.agreePrivacy),
     agreeThirdParty: Boolean(body.agreeThirdParty),
-    agreeContact: Boolean(body.agreeContact)
+    agreeMarketing: Boolean(body.agreeMarketing)
   });
 }
 
@@ -811,7 +811,7 @@ app.post("/consult", withAsync(async (req, res) => {
   }
 
   const payload = parsed.data;
-  const requiredAgreements = payload.agreePrivacy && payload.agreeThirdParty && payload.agreeContact;
+  const requiredAgreements = payload.agreePrivacy && payload.agreeThirdParty;
   if (!requiredAgreements) {
     await writeAuditLog(req, "consult_create", "agreement_fail", "consult_request", "new");
     return res.redirect("/?fail=agreement#consult");
@@ -843,7 +843,7 @@ app.post("/consult", withAsync(async (req, res) => {
     agreements: {
       privacy: payload.agreePrivacy,
       thirdParty: payload.agreeThirdParty,
-      contact: payload.agreeContact
+      marketing: payload.agreeMarketing
     },
     createdAt: new Date().toISOString()
   });

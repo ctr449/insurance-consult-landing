@@ -245,18 +245,136 @@
             >
           </div>
         </div>
-        <label class="check-item">
-          <input type="checkbox" name="agreePrivacy" required />
-          개인정보 수집 및 이용 동의
-        </label>
-        <label class="check-item">
-          <input type="checkbox" name="agreeThirdParty" required />
-          보험 상담 진행을 위한 제3자 제공 동의
-        </label>
-        <label class="check-item">
-          <input type="checkbox" name="agreeContact" required />
-          상담 연결 및 연락 수신 동의
-        </label>
+        <div class="field-group agreement-privacy">
+          <div class="agreement-headline">
+            <input
+              id="agreePrivacy"
+              class="agreement-headline__cb"
+              type="checkbox"
+              name="agreePrivacy"
+              required
+              aria-describedby="privacy-agreement-full"
+            />
+            <div class="agreement-line-wrap">
+              <label class="agreement-text-label" for="agreePrivacy">[필수] 개인정보 수집 및 이용 동의</label><details
+                class="agreement-details agreement-details--inline"
+              >
+                <summary class="agreement-details__summary">보기</summary>
+                <div class="agreement-scroll" id="privacy-agreement-full">
+                  <p class="agreement-scroll__lead"><strong>[필수] 개인정보 수집 및 이용 동의</strong></p>
+                  <p>
+                    플랜바인(PLANVINE)은 보험 관련 상담 연결 서비스 제공을 위해 아래와 같이 개인정보를 수집 및 이용합니다.
+                  </p>
+                  <p><strong>■ 수집 항목</strong></p>
+                  <ul>
+                    <li>이름</li>
+                    <li>휴대전화번호</li>
+                    <li>현재 보험 가입 여부</li>
+                    <li>보험 관련 만족도</li>
+                    <li>상담 요청 내용</li>
+                  </ul>
+                  <p><strong>■ 수집 및 이용 목적</strong></p>
+                  <ul>
+                    <li>보험 관련 상담 신청 접수</li>
+                    <li>이용자 본인 확인</li>
+                    <li>보험 관련 상담 연결</li>
+                    <li>상담 요청 대응</li>
+                    <li>서비스 운영 및 품질 개선</li>
+                  </ul>
+                  <p><strong>■ 보유 및 이용 기간</strong></p>
+                  <ul>
+                    <li>상담 목적 달성 후 즉시 파기</li>
+                    <li>관련 법령에 따라 보관이 필요한 경우 해당 기간 동안 보관</li>
+                  </ul>
+                  <p>
+                    이용자는 개인정보 수집 및 이용 동의를 거부할 권리가 있으며, 동의 거부 시 상담 신청 서비스 이용이 제한될 수
+                    있습니다.
+                  </p>
+                </div>
+              </details>
+            </div>
+          </div>
+        </div>
+        <div class="field-group agreement-privacy">
+          <div class="agreement-headline">
+            <input
+              id="agreeThirdParty"
+              class="agreement-headline__cb"
+              type="checkbox"
+              name="agreeThirdParty"
+              required
+              aria-describedby="thirdparty-agreement-full"
+            />
+            <div class="agreement-line-wrap">
+              <label class="agreement-text-label" for="agreeThirdParty">[필수] 개인정보 제3자 제공 동의</label><details
+                class="agreement-details agreement-details--inline"
+              >
+                <summary class="agreement-details__summary">보기</summary>
+                <div class="agreement-scroll" id="thirdparty-agreement-full">
+                  <p class="agreement-scroll__lead"><strong>[필수] 개인정보 제3자 제공 동의</strong></p>
+                  <p>
+                    플랜바인(PLANVINE)은 보험 상담 연결 서비스 제공을 위해 아래와 같이 개인정보를 제3자에게 제공합니다.
+                  </p>
+                  <p><strong>■ 제공받는 자</strong></p>
+                  <ul>
+                    <li>제휴 보험설계사</li>
+                    <li>보험 상담 전문 파트너</li>
+                  </ul>
+                  <p><strong>■ 제공 항목</strong></p>
+                  <ul>
+                    <li>이름</li>
+                    <li>휴대전화번호</li>
+                    <li>현재 보험 가입 여부</li>
+                    <li>보험 관련 만족도</li>
+                    <li>상담 요청 내용</li>
+                  </ul>
+                  <p><strong>■ 제공 목적</strong></p>
+                  <ul>
+                    <li>보험 관련 상담 진행</li>
+                    <li>보험 상담 서비스 제공</li>
+                  </ul>
+                  <p><strong>■ 보유 및 이용 기간</strong></p>
+                  <ul>
+                    <li>제공 목적 달성 후 즉시 파기</li>
+                    <li>관련 법령에 따라 보관이 필요한 경우 해당 기간 동안 보관</li>
+                  </ul>
+                  <p>
+                    이용자는 개인정보 제3자 제공 동의를 거부할 권리가 있으며, 동의 거부 시 상담 신청 서비스 이용이 제한될 수
+                    있습니다.
+                  </p>
+                </div>
+              </details>
+            </div>
+          </div>
+        </div>
+        <div class="field-group agreement-privacy">
+          <div class="agreement-headline">
+            <input
+              id="agreeMarketing"
+              class="agreement-headline__cb"
+              type="checkbox"
+              name="agreeMarketing"
+              aria-describedby="marketing-agreement-full"
+            />
+            <div class="agreement-line-wrap">
+              <label class="agreement-text-label agreement-text-label--optional" for="agreeMarketing"
+                >[선택] 마케팅 정보 수신 동의</label
+              ><details class="agreement-details agreement-details--inline">
+                <summary class="agreement-details__summary">보기</summary>
+                <div class="agreement-scroll" id="marketing-agreement-full">
+                  <p class="agreement-scroll__lead"><strong>[선택] 마케팅 정보 수신 동의</strong></p>
+                  <p>
+                    플랜바인(PLANVINE)은 이벤트, 프로모션, 서비스 안내 등 마케팅 정보를 제공하기 위해 개인정보를 활용할 수
+                    있습니다.
+                  </p>
+                  <p>
+                    이용자는 동의를 거부할 권리가 있으며, 동의하지 않아도 서비스 이용에는 제한이 없습니다.
+                  </p>
+                </div>
+              </details>
+            </div>
+          </div>
+        </div>
         <button type="submit">상담 요청 보내기</button>
       </form>
       <p class="notice">
