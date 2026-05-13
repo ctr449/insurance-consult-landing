@@ -496,6 +496,13 @@ button {
   margin-bottom: 4px;
 }
 
+.agreement-footnote {
+  margin: 0 0 4px;
+  font-size: 0.8125rem;
+  line-height: 1.55;
+  color: #64748b;
+}
+
 .check-item {
   width: 100%;
   display: flex;

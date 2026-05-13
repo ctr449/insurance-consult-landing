@@ -38,7 +38,7 @@ const SESSION_SECRET = String(process.env.SESSION_SECRET || "").trim();
 const RETENTION_DAYS = Number(process.env.RETENTION_DAYS || 90);
 const OPERATOR_PAGE_SIZE = 50;
 const DUPLICATE_LEAD_WINDOW_HOURS = Number(process.env.DUPLICATE_LEAD_WINDOW_HOURS || 24);
-const AGREEMENT_VERSION = process.env.AGREEMENT_VERSION || "v1.0";
+const AGREEMENT_VERSION = process.env.AGREEMENT_VERSION || "v2.0";
 const PURGE_SCHEDULE_HOUR = Number(process.env.PURGE_SCHEDULE_HOUR || 3);
 const PURGE_ON_STARTUP = String(process.env.PURGE_ON_STARTUP || "true").toLowerCase() !== "false";
 const DB_HEALTHCHECK_TIMEOUT_MS = Number(process.env.DB_HEALTHCHECK_TIMEOUT_MS || 2000);
@@ -781,7 +781,8 @@ app.get("/", (req, res) => {
   res.render("index", {
     success: req.query.sent === "1",
     fail: req.query.fail || "",
-    csrfToken: req.csrfToken()
+    csrfToken: req.csrfToken(),
+    retentionDays: RETENTION_DAYS
   });
 });
 
