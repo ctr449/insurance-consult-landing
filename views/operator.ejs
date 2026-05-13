@@ -46,7 +46,7 @@
             마케팅(<%= item.agreements?.marketing ? "Y" : "N" %>)
           </p>
           <p><strong>동의 문구 버전</strong>: <%= item.agreementVersion || "-" %></p>
-          <p><strong>접수시각</strong>: <%= new Date(item.createdAt).toLocaleString("ko-KR") %></p>
+          <p><strong>접수시각</strong>: <%= item.receivedAtLabel %></p>
         </article>
         <% }) %>
       </div>

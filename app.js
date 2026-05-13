@@ -316,9 +316,27 @@ const INSURANCE_STATE_LABELS = {
   unknown: "잘모르겠음"
 };
 
+/** 접수 시각: 한국 시각, 24시간제, 분 단위 (운용자 화면용) */
+function formatConsultReceivedAtKst(isoOrDate) {
+  const d = new Date(isoOrDate);
+  if (Number.isNaN(d.getTime())) return "-";
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Seoul",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false
+  }).formatToParts(d);
+  const v = (type) => parts.find((p) => p.type === type)?.value ?? "";
+  return `${v("year")}-${v("month")}-${v("day")} ${v("hour")}:${v("minute")}`;
+}
+
 function toDisplayRequest(item) {
   return {
     ...item,
+    receivedAtLabel: formatConsultReceivedAtKst(item.createdAt),
     name: item.nameEnc ? decryptPII(item.nameEnc) : item.name || "",
     phone: item.phoneEnc ? decryptPII(item.phoneEnc) : item.phone || "",
     ageLabel: formatAgeLabel(item),
