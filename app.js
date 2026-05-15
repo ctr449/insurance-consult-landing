@@ -978,11 +978,7 @@ app.post("/operator/login", operatorLoginLimiter, withAsync(async (req, res) => 
   const otp = String(req.body.otp || "");
   const failReason = await getOperatorLoginFailureReason(username, password, otp);
   if (failReason) {
-    const errorByReason = {
-      username: "아이디를 확인해주세요.",
-      password: "비밀번호를 확인해주세요.",
-      otp: "인증코드(6자리)를 확인해주세요."
-    };
+    const loginErrorMessage = "다시 확인해주세요.";
     await writeAuditLog(
       req,
       "operator_login",
@@ -991,7 +987,7 @@ app.post("/operator/login", operatorLoginLimiter, withAsync(async (req, res) => 
       username || "unknown"
     );
     return res.status(401).render("operator-login", {
-      error: errorByReason[failReason],
+      error: loginErrorMessage,
       csrfToken: req.csrfToken(),
       totpRequired: OPERATOR_TOTP_ENABLED
     });
