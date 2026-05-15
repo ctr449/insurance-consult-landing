@@ -979,9 +979,9 @@ app.post("/operator/login", operatorLoginLimiter, withAsync(async (req, res) => 
   const failReason = await getOperatorLoginFailureReason(username, password, otp);
   if (failReason) {
     const errorByReason = {
-      username: "아이디를 확인해주세요. (Railway의 OPERATOR_USERNAME과 동일해야 합니다.)",
-      password: "비밀번호를 확인해주세요. (OPERATOR_PASSWORD_HASH는 bcrypt 해시이며, 해시를 만들 때 쓴 비밀번호와 같아야 합니다.)",
-      otp: "인증코드(6자리)를 확인해주세요. (Authenticator에 등록한 키가 Railway의 OPERATOR_TOTP_SECRET과 같은지, 휴대폰 시간이 맞는지 확인하세요.)"
+      username: "아이디를 확인해주세요.",
+      password: "비밀번호를 확인해주세요.",
+      otp: "인증코드(6자리)를 확인해주세요."
     };
     await writeAuditLog(
       req,
