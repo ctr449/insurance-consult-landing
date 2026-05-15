@@ -175,6 +175,37 @@ app.use((req, res, next) => {
   }
   return next();
 });
+
+/**
+ * PUBLIC_SITE_URL 호스트가 www.example.com 이면,
+ * example.com(apex)로 들어온 요청을 https://www.example.com + 동일 경로로 301.
+ */
+function apexToWwwRedirectUrl(req) {
+  if (!isProduction) return "";
+  const fromEnv = String(process.env.PUBLIC_SITE_URL || process.env.SITE_URL || "").trim();
+  if (!fromEnv) return "";
+  try {
+    const u = new URL(fromEnv.includes("://") ? fromEnv : `https://${fromEnv}`);
+    const wantHost = u.hostname.toLowerCase();
+    if (!wantHost.startsWith("www.")) return "";
+    const apexHost = wantHost.slice(4);
+    const raw = String(req.get("x-forwarded-host") || req.get("host") || "");
+    const curHost = raw.split(":")[0].toLowerCase();
+    if (curHost && curHost === apexHost) {
+      return `https://${wantHost}${req.originalUrl || "/"}`;
+    }
+  } catch {
+    return "";
+  }
+  return "";
+}
+
+app.use((req, res, next) => {
+  const to = apexToWwwRedirectUrl(req);
+  if (to) return res.redirect(301, to);
+  return next();
+});
+
 app.use(cookieParser());
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static(path.join(__dirname, "public")));
