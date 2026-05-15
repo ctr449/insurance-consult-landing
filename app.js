@@ -795,12 +795,46 @@ function requireOperatorAuth(req, res, next) {
   return next();
 }
 
+function escapeXml(value) {
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
+}
+
+/** 공개 사이트 절대 URL (사이트맵·canonical). PUBLIC_SITE_URL 우선, 없으면 요청 Host 기준. */
+function getPublicSiteOrigin(req) {
+  const fromEnv = String(process.env.PUBLIC_SITE_URL || process.env.SITE_URL || "").trim();
+  if (fromEnv) {
+    try {
+      const u = new URL(fromEnv.includes("://") ? fromEnv : `https://${fromEnv}`);
+      return `${u.protocol}//${u.host}`.replace(/\/$/, "");
+    } catch {
+      return fromEnv.replace(/\/$/, "");
+    }
+  }
+  const forwardedProto = String(req.get("x-forwarded-proto") || "")
+    .split(",")[0]
+    .trim()
+    .toLowerCase();
+  const proto = forwardedProto || (isProduction ? "https" : req.protocol || "http");
+  const host = String(req.get("x-forwarded-host") || req.get("host") || "").trim();
+  if (!host) return "";
+  return `${proto}://${host}`.replace(/\/$/, "");
+}
+
 app.get("/", (req, res) => {
+  const publicOrigin = getPublicSiteOrigin(req);
+  const canonicalUrl = publicOrigin ? `${publicOrigin}/` : "";
   res.render("index", {
     success: req.query.sent === "1",
     fail: req.query.fail || "",
     csrfToken: req.csrfToken(),
-    retentionDays: RETENTION_DAYS
+    retentionDays: RETENTION_DAYS,
+    canonicalUrl,
+    publicOrigin
   });
 });
 
@@ -821,6 +855,35 @@ app.get("/healthz", withAsync(async (req, res) => {
     });
   }
 }));
+
+app.get("/robots.txt", (req, res) => {
+  const origin = getPublicSiteOrigin(req);
+  const lines = ["User-agent: *", "Allow: /", "Disallow: /operator", ""];
+  if (origin) {
+    lines.push(`Sitemap: ${origin}/sitemap.xml`, "");
+  }
+  res.type("text/plain; charset=utf-8").send(lines.join("\n"));
+});
+
+app.get("/sitemap.xml", (req, res) => {
+  const origin = getPublicSiteOrigin(req);
+  if (!origin) {
+    return res
+      .status(503)
+      .type("text/plain; charset=utf-8")
+      .send("Configure PUBLIC_SITE_URL or request with a valid Host header.");
+  }
+  const loc = `${origin}/`;
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>${escapeXml(loc)}</loc>
+    <changefreq>weekly</changefreq>
+    <priority>1.0</priority>
+  </url>
+</urlset>`;
+  res.type("application/xml; charset=utf-8").send(xml);
+});
 
 app.post("/consult", withAsync(async (req, res) => {
   const parsed = parseConsultPayload(req.body);
