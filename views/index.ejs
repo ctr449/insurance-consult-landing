@@ -3,19 +3,19 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>PlanVine — 보험 상담</title>
+    <title>플랜바인(planvine) — 보험 상담 연결</title>
     <meta
       name="description"
-      content="PLAN VINE(플랜바인) 보험 상담 연결 서비스. 보험료 부담·가입 상태 점검 후 전문 보험설계사 상담 연결을 신청할 수 있습니다."
+      content="플랜바인(planvine) 보험 상담 연결 서비스. 보험료 부담·가입 상태 점검 후 전문 보험설계사 상담 연결을 신청할 수 있습니다."
     />
     <meta name="robots" content="index,follow" />
     <% if (canonicalUrl) { %>
     <link rel="canonical" href="<%= canonicalUrl %>" />
     <meta property="og:type" content="website" />
-    <meta property="og:title" content="PlanVine — 보험 상담" />
+    <meta property="og:title" content="플랜바인(planvine) — 보험 상담 연결" />
     <meta
       property="og:description"
-      content="보험 상담 연결 플랫폼. 전문 보험설계사 상담 연결을 신청해 보세요."
+      content="플랜바인(planvine) 보험 상담 연결. 전문 보험설계사 상담 연결을 신청해 보세요."
     />
     <meta property="og:url" content="<%= canonicalUrl %>" />
     <meta property="og:locale" content="ko_KR" />
@@ -23,10 +23,10 @@
       <%- JSON.stringify({
         "@context": "https://schema.org",
         "@type": "WebSite",
-        name: "PLAN VINE",
-        alternateName: "PlanVine",
+        name: "플랜바인",
+        alternateName: ["planvine", "PlanVine", "PLAN VINE"],
         url: canonicalUrl,
-        description: "보험 상담 연결 서비스"
+        description: "플랜바인(planvine) 보험 상담 연결 서비스"
       }) %>
     </script>
     <% } %>
@@ -50,7 +50,10 @@
     </header>
     <header class="hero">
       <h1>보험료가 부담되시나요?</h1>
-      <p class="hero-sub">현재 가입된 보험 상태를 확인하고 전문 보험설계사 상담 연결을 받아보세요.</p>
+      <p class="hero-sub">
+        <span class="hero-brand">플랜바인(planvine)</span> — 현재 가입된 보험 상태를 확인하고 전문 보험설계사 상담 연결을
+        받아보세요.
+      </p>
       <div class="cta-group">
         <a href="#consult" class="cta">상담 신청하기</a>
         <a href="#consult" class="cta">보험 점검 요청</a>
