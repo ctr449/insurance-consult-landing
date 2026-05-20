@@ -98,7 +98,7 @@
       <% } %>
       <% if (fail === "validation") { %>
       <p class="error">
-        입력값을 다시 확인해주세요. (이름/연락처/지역/월 예산/상담 가능 시간/현재 보험 상태/연령대/성별/최근 점검)
+        입력값을 다시 확인해주세요. (이름/연락처/지역/직업/상담 가능 시간/현재 보험 상태/연령대/성별/최근 점검)
       </p>
       <% } %>
       <% if (fail === "duplicate") { %>
@@ -162,14 +162,16 @@
           <input id="applicant-name" name="name" placeholder="이름을 입력해주세요" required />
         </div>
         <div class="field-group field-group--text">
-          <label class="field-label" for="applicant-budget">월 예산</label>
-          <select id="applicant-budget" name="monthlyBudget" required>
-            <option value="" selected disabled>월 예산 선택</option>
-            <option value="under200">200만원 미만</option>
-            <option value="200to300">200~300만원</option>
-            <option value="300to400">300~400만원</option>
-            <option value="400to500">400~500만원</option>
-            <option value="over500">500만원 이상</option>
+          <label class="field-label" for="applicant-occupation">직업</label>
+          <select id="applicant-occupation" name="occupation" required>
+            <option value="" selected disabled>직업 선택</option>
+            <option value="employee">직장인</option>
+            <option value="self_employed">자영업자</option>
+            <option value="homemaker">전업주부</option>
+            <option value="student">학생</option>
+            <option value="freelancer">프리랜서</option>
+            <option value="unemployed">무직</option>
+            <option value="other">기타</option>
           </select>
         </div>
         <div class="field-group">

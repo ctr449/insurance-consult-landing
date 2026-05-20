@@ -305,7 +305,18 @@ const REGION_LABELS = {
   jeju: "제주특별자치도"
 };
 
-const MONTHLY_BUDGET_LABELS = {
+const OCCUPATION_LABELS = {
+  employee: "직장인",
+  self_employed: "자영업자",
+  homemaker: "전업주부",
+  student: "학생",
+  freelancer: "프리랜서",
+  unemployed: "무직",
+  other: "기타"
+};
+
+/** 예전 monthly_budget 값(레거시 접수) 표시용 */
+const LEGACY_MONTHLY_BUDGET_LABELS = {
   under200: "200만원 미만",
   "200to300": "200~300만원",
   "300to400": "300~400만원",
@@ -373,10 +384,7 @@ function toDisplayRequest(item) {
     ageLabel: formatAgeLabel(item),
     regionLabel:
       item.region && REGION_LABELS[item.region] ? REGION_LABELS[item.region] : item.regionLabel || "-",
-    monthlyBudgetLabel:
-      item.monthlyBudget && MONTHLY_BUDGET_LABELS[item.monthlyBudget]
-        ? MONTHLY_BUDGET_LABELS[item.monthlyBudget]
-        : "-",
+    occupationLabel: formatOccupationLabel(item.occupation),
     availableTimeLabel:
       item.availableTime && AVAILABLE_TIME_LABELS[item.availableTime]
         ? AVAILABLE_TIME_LABELS[item.availableTime]
@@ -427,7 +435,15 @@ const consultPayloadSchema = z.object({
   ]),
   ageBand: z.enum(["20", "30", "40", "50", "60"]),
   gender: z.enum(["male", "female"]),
-  monthlyBudget: z.enum(["under200", "200to300", "300to400", "400to500", "over500"]),
+  occupation: z.enum([
+    "employee",
+    "self_employed",
+    "homemaker",
+    "student",
+    "freelancer",
+    "unemployed",
+    "other"
+  ]),
   availableTime: z.enum([
     "t09",
     "t10",
@@ -459,7 +475,7 @@ function parseConsultPayload(body) {
     region: String(body.region || ""),
     ageBand: String(body.ageBand || ""),
     gender: String(body.gender || "").toLowerCase(),
-    monthlyBudget: String(body.monthlyBudget || ""),
+    occupation: String(body.occupation || ""),
     availableTime: String(body.availableTime || ""),
     consultHope: body.consultHope ? String(body.consultHope || "").toLowerCase() : "yes",
     insuredStatus: body.insuredStatus ? String(body.insuredStatus || "").toLowerCase() : "unknown",
@@ -475,6 +491,13 @@ function formatAgeLabel(item) {
   if (item.ageBand && AGE_BAND_LABELS[item.ageBand]) {
     return AGE_BAND_LABELS[item.ageBand];
   }
+  return "-";
+}
+
+function formatOccupationLabel(code) {
+  const key = String(code || "").trim();
+  if (OCCUPATION_LABELS[key]) return OCCUPATION_LABELS[key];
+  if (LEGACY_MONTHLY_BUDGET_LABELS[key]) return LEGACY_MONTHLY_BUDGET_LABELS[key];
   return "-";
 }
 
@@ -677,7 +700,7 @@ async function readConsultRequests({ limit = OPERATOR_PAGE_SIZE, offset = 0 } = 
         region,
         age_band AS "ageBand",
         gender,
-        monthly_budget AS "monthlyBudget",
+        monthly_budget AS occupation,
         available_time AS "availableTime",
         agreement_version AS "agreementVersion",
         consult_hope AS "consultHope",
@@ -752,7 +775,7 @@ async function appendConsultRequest(request) {
       request.region,
       request.ageBand,
       request.gender,
-      request.monthlyBudget,
+      request.occupation,
       request.availableTime,
       request.agreementVersion,
       request.consultHope,
@@ -946,7 +969,7 @@ app.post("/consult", withAsync(async (req, res) => {
     region: sanitizeRegion(payload.region),
     ageBand: sanitizeAgeBand(payload.ageBand),
     gender: sanitizeGender(payload.gender),
-    monthlyBudget: payload.monthlyBudget,
+    occupation: payload.occupation,
     availableTime: payload.availableTime,
     agreementVersion: AGREEMENT_VERSION,
     consultHope: payload.consultHope,
